@@ -2258,7 +2258,7 @@ class VoteDocxApp(tk.Tk):
         apply_button.pack(fill="x", pady=(8, 0))
         ttk.Label(
             controls,
-            text="方向按钮每次移动 1pt；也可直接拖动红框。文字和红框会即时移动，停手后自动生成精确的 Word→PDF 打印预览。",
+            text="可直接拖动红框内的文字；点击预览后也可用方向键移动。普通方向键 1pt，Shift 5pt，Ctrl 0.1pt。停手后自动生成精确打印预览。",
             wraplength=245,
             foreground="#4b5563",
         ).pack(anchor="w", pady=(8, 0))
@@ -2271,7 +2271,7 @@ class VoteDocxApp(tk.Tk):
         fit_button = ttk.Button(zoom_box, text="适合宽度")
         fit_button.pack(side="right")
 
-        canvas = tk.Canvas(canvas_box, background="#d1d5db", highlightthickness=0)
+        canvas = tk.Canvas(canvas_box, background="#d1d5db", highlightthickness=0, takefocus=True)
         scroll_y = ttk.Scrollbar(canvas_box, orient="vertical", command=canvas.yview)
         scroll_x = ttk.Scrollbar(canvas_box, orient="horizontal", command=canvas.xview)
         canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
@@ -2457,7 +2457,16 @@ class VoteDocxApp(tk.Tk):
                         width=2,
                         tags=("field_overlay",),
                     )
-                    overlay_items.append({"id": border_id, "x1": x1 - 3, "y1": y1 - 3, "x2": x2 + 3, "y2": y2 + 3})
+                    hit_padding = 9
+                    overlay_items.append(
+                        {
+                            "id": border_id,
+                            "x1": x1 - hit_padding,
+                            "y1": y1 - hit_padding,
+                            "x2": x2 + hit_padding,
+                            "y2": y2 + hit_padding,
+                        }
+                    )
             except Exception:
                 return
 
@@ -2653,7 +2662,7 @@ class VoteDocxApp(tk.Tk):
         def on_style_control_changed(*_args):
             queue_exact_refresh()
 
-        def nudge(dx: int, dy: int):
+        def nudge(dx: float, dy: float):
             try:
                 next_x = float(offset_x.get() or 0) + dx
             except Exception:
@@ -2693,21 +2702,35 @@ class VoteDocxApp(tk.Tk):
 
         fit_button.configure(command=fit_width)
 
-        def on_canvas_press(event):
-            mouse_x, mouse_y = canvas.canvasx(event.x), canvas.canvasy(event.y)
-            drag_state.clear()
+        def overlay_at(mouse_x: float, mouse_y: float) -> Optional[Dict[str, Any]]:
             for overlay in reversed(overlay_items):
                 if overlay["x1"] <= mouse_x <= overlay["x2"] and overlay["y1"] <= mouse_y <= overlay["y2"]:
-                    drag_state.update(
-                        {
-                            "startX": mouse_x,
-                            "startY": mouse_y,
-                            "baseX": float(offset_x.get() or 0),
-                            "baseY": float(offset_y.get() or 0),
-                            "moved": False,
-                        }
-                    )
-                    return
+                    return overlay
+            return None
+
+        def on_canvas_press(event):
+            canvas.focus_set()
+            mouse_x, mouse_y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+            drag_state.clear()
+            if overlay_at(mouse_x, mouse_y) is not None:
+                drag_state.update(
+                    {
+                        "startX": mouse_x,
+                        "startY": mouse_y,
+                        "baseX": float(offset_x.get() or 0),
+                        "baseY": float(offset_y.get() or 0),
+                        "moved": False,
+                    }
+                )
+                canvas.configure(cursor="fleur")
+                preview_status.set("已选中当前文字：拖动鼠标，或使用方向键微调位置。")
+
+        def on_canvas_motion(event):
+            if drag_state:
+                canvas.configure(cursor="fleur")
+                return
+            mouse_x, mouse_y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+            canvas.configure(cursor="fleur" if overlay_at(mouse_x, mouse_y) is not None else "")
 
         def on_canvas_drag(event):
             if not drag_state:
@@ -2731,9 +2754,32 @@ class VoteDocxApp(tk.Tk):
                 if moved:
                     queue_exact_refresh(delay_ms=120, push_undo=False)
 
+        def on_canvas_key(event):
+            key_moves = {
+                "Left": (-1.0, 0.0),
+                "Right": (1.0, 0.0),
+                "Up": (0.0, -1.0),
+                "Down": (0.0, 1.0),
+            }
+            move = key_moves.get(str(event.keysym))
+            if move is None:
+                return None
+            control_pressed = bool(int(event.state) & 0x0004)
+            shift_pressed = bool(int(event.state) & 0x0001)
+            step = 0.1 if control_pressed else 5.0 if shift_pressed else 1.0
+            nudge(move[0] * step, move[1] * step)
+            preview_status.set(f"已用方向键移动 {step:g}pt；停手后自动生成精确打印预览。")
+            return "break"
+
         canvas.bind("<ButtonPress-1>", on_canvas_press)
         canvas.bind("<B1-Motion>", on_canvas_drag)
         canvas.bind("<ButtonRelease-1>", on_canvas_release)
+        canvas.bind("<Motion>", on_canvas_motion)
+        canvas.bind("<Leave>", lambda _event: canvas.configure(cursor=""))
+        canvas.bind("<Left>", on_canvas_key)
+        canvas.bind("<Right>", on_canvas_key)
+        canvas.bind("<Up>", on_canvas_key)
+        canvas.bind("<Down>", on_canvas_key)
 
         def on_mousewheel(event):
             if getattr(event, "num", None) == 4:
@@ -2793,7 +2839,7 @@ class VoteDocxApp(tk.Tk):
         confirm_button.pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", reject_preview)
         load_field_controls()
-        dialog.focus_set()
+        canvas.focus_set()
 
     def on_validation_changed(self):
         self.sync_validation_to_mapping()
