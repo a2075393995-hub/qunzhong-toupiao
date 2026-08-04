@@ -157,7 +157,7 @@ class VoteDocxApp(tk.Tk):
         self.apply_style_to_all_options = tk.BooleanVar(value=True)
         self.preview_ready = False
         self.preview_path: Optional[Path] = None
-        self.file_status_text = tk.StringVar(value="流程：上传模板 -> 上传数据文件 -> 调试模板 -> 导出前预览 -> 开始导出")
+        self.file_status_text = tk.StringVar(value="流程：上传模板 -> 上传数据文件 -> 设置模板 -> 导出前预览 -> 开始导出")
         self.drag_adjust_start: Optional[Tuple[int, int, int, int]] = None
         self.drag_adjust_moved = False
         self.mouse_down_cell: Optional[Dict[str, Any]] = None
@@ -211,13 +211,13 @@ class VoteDocxApp(tk.Tk):
         header_left = ttk.Frame(header, style="Header.TFrame")
         header_left.pack(side="left", fill="x", expand=True)
         ttk.Label(header_left, text=APP_NAME, style="Header.TLabel").pack(anchor="w")
-        ttk.Label(header_left, text="上传模板和投票数据，调试标注后批量生成一人一份 DOCX", style="SubHeader.TLabel").pack(anchor="w", pady=(4, 0))
+        ttk.Label(header_left, text="上传模板和投票数据，设置填入位置后批量生成一人一份 DOCX", style="SubHeader.TLabel").pack(anchor="w", pady=(4, 0))
         header_right = ttk.Frame(header, style="Header.TFrame")
         header_right.pack(side="right", padx=(16, 0))
         ttk.Label(header_right, text=f"发布版 v{APP_VERSION}", style="Version.TLabel").pack(side="left", padx=(0, 10))
         self.update_button = tk.Button(
             header_right,
-            text="开发更新",
+            text="检查更新",
             command=self.check_for_updates,
             relief="flat",
             borderwidth=0,
@@ -260,8 +260,8 @@ class VoteDocxApp(tk.Tk):
         workflow.pack(side="top", fill="x", padx=12, pady=(10, 0))
         self.workflow_button(workflow, "template", "1 上传模板", self.choose_template).grid(row=0, column=0, padx=(0, 8), sticky="w")
         self.workflow_button(workflow, "data", "2 上传数据文件", self.choose_data).grid(row=0, column=1, padx=(0, 8), sticky="w")
-        self.workflow_button(workflow, "debug", "3 调试模板", self.debug_template).grid(row=0, column=2, padx=(0, 8), sticky="w")
-        debug_done_button = self.workflow_button(workflow, "debug_done", "4 调试完成", self.finish_debug)
+        self.workflow_button(workflow, "debug", "3 设置模板", self.debug_template).grid(row=0, column=2, padx=(0, 8), sticky="w")
+        debug_done_button = self.workflow_button(workflow, "debug_done", "4 确认设置", self.finish_debug)
         debug_done_button.grid(row=0, column=3, padx=(0, 8), sticky="w")
         self.debug_controls.append(debug_done_button)
         self.workflow_button(workflow, "preview", "5 导出前预览", self.preview_docx).grid(row=0, column=4, padx=(0, 8), sticky="w")
@@ -335,21 +335,21 @@ class VoteDocxApp(tk.Tk):
                 except Exception:
                     pass
         if enabled:
-            self.status_text.set("调试区已解锁：先选左侧结果，再点击右侧模板预览。")
+            self.status_text.set("模板设置区已启用：先选左侧项目，再点击右侧模板预览。")
         else:
-            self.status_text.set("请先点击“调试模板”解锁调试工作区。")
+            self.status_text.set("请先点击“设置模板”启用模板设置区。")
 
     def finish_debug(self):
         if not self.debug_workspace_enabled:
-            messagebox.showinfo("尚未进入调试", "请先点击顶部“调试模板”。")
+            messagebox.showinfo("尚未开始设置", "请先点击顶部“设置模板”。")
             return
         self.sync_validation_to_mapping(invalidate=False)
         self.debug_completed = True
         self.mark_workflow_done("debug_done")
         if self.records:
             self.load_data_preview()
-        self.log("模板调试完成：可以进入“导出前预览”。")
-        messagebox.showinfo("调试完成", "当前模板标注已确认，可以点击“导出前预览”。")
+        self.log("模板设置已确认：可以进入“导出前预览”。")
+        messagebox.showinfo("设置完成", "当前模板标注已确认，可以点击“导出前预览”。")
 
     def mark_debug_dirty(self):
         self.debug_completed = False
@@ -399,9 +399,9 @@ class VoteDocxApp(tk.Tk):
             self.debug_completed = False
             self.set_debug_workspace_enabled(True)
             self.reset_workflow_after("debug_done", "preview", "export")
-            self.status_text.set("已回到模板调试状态。")
+            self.status_text.set("已回到模板设置状态。")
             return
-        messagebox.showinfo("没有可撤销操作", "当前没有可以撤销的调试操作。")
+        messagebox.showinfo("没有可撤销操作", "当前没有可以撤销的模板设置操作。")
 
     def reset_app_state(self):
         if not messagebox.askyesno("确认重置", "确定清空当前模板、数据、标注和预览吗？\n\n已经导出的文件不会被删除。"):
@@ -493,7 +493,7 @@ class VoteDocxApp(tk.Tk):
         split.pack(fill="both", expand=True)
 
         preview = ttk.LabelFrame(split, text="数据预览（拖动中间分隔条调整）", style="Panel.TLabelframe", padding=8)
-        log_frame = ttk.LabelFrame(split, text="调试信息（拖动中间分隔条调整）", style="Panel.TLabelframe", padding=8)
+        log_frame = ttk.LabelFrame(split, text="操作记录（拖动中间分隔条调整）", style="Panel.TLabelframe", padding=8)
         split.add(preview, minsize=420, stretch="always")
         split.add(log_frame, minsize=260)
 
@@ -785,7 +785,7 @@ class VoteDocxApp(tk.Tk):
         self.preview_path = None
         self.mark_workflow_done("debug")
         self.reset_workflow_after("debug_done", "preview", "export")
-        self.log("模板调试已打开：调试区已解锁，完成后请点击顶部“4 调试完成”。")
+        self.log("模板设置已打开：完成后请点击顶部“4 确认设置”。")
 
     def start_export(self):
         if not self.preview_ready or not self.preview_path:
@@ -1476,7 +1476,7 @@ class VoteDocxApp(tk.Tk):
 
     def on_preview_mouse_down(self, event):
         if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“调试模板”解锁调试工作区。")
+            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
             return
         if self.preview_widget is not None:
             self.preview_widget.focus_set()
@@ -1529,7 +1529,7 @@ class VoteDocxApp(tk.Tk):
 
     def on_preview_image_clicked(self, event):
         if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“调试模板”解锁调试工作区。")
+            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
             return
         cell = self.find_preview_cell(event.x, event.y)
         if cell:
@@ -1635,7 +1635,7 @@ class VoteDocxApp(tk.Tk):
 
     def start_select_mark_for_adjust(self):
         if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“调试模板”解锁调试工作区。")
+            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
             return
         self.select_mark_for_adjust = True
         self.status_text.set("请选择一个蓝色打勾位置；选中后再用方向键或按钮微调。")
@@ -1940,7 +1940,7 @@ class VoteDocxApp(tk.Tk):
 
     def nudge_mark(self, dx: int, dy: int):
         if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“调试模板”解锁调试工作区。")
+            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
             return
         if not self.mark_pair_for_ref(self.selected_mark_ref):
             self.status_text.set("请先点击“选择打勾位置”，再选择一个蓝色打勾格。")
@@ -1954,7 +1954,7 @@ class VoteDocxApp(tk.Tk):
 
     def on_cell_clicked(self, target: Dict[str, Any], text: str):
         if not self.debug_workspace_enabled:
-            messagebox.showinfo("调试区未解锁", "请先点击顶部“调试模板”。")
+            messagebox.showinfo("模板设置区未启用", "请先点击顶部“设置模板”。")
             return
         selected_keys = self.selected_option_keys()
         if not selected_keys:
@@ -2159,6 +2159,7 @@ class VoteDocxApp(tk.Tk):
         dialog.grab_set()
 
         current_docx = Path(preview_path)
+        initial_docx = current_docx.resolve()
         current_pdf = Path(initial_pdf)
         rendered_images = initial_images
         page_info = initial_page_info
@@ -2166,6 +2167,27 @@ class VoteDocxApp(tk.Tk):
         page_origins: List[Tuple[int, int]] = []
         overlay_items: List[Dict[str, Any]] = []
         drag_state: Dict[str, Any] = {}
+        pdf_field_styles = copy.deepcopy(self.mapping.get("fieldStyles", {}) or {})
+        match_cache: Dict[Tuple[str, str], List[Dict[str, float]]] = {}
+        refresh_state: Dict[str, Any] = {
+            "afterId": None,
+            "running": False,
+            "requested": 0,
+            "closed": False,
+            "changeGroupOpen": False,
+        }
+        controls_loading = False
+        confirm_button: Optional[ttk.Button] = None
+
+        def remove_intermediate_docx(path: Optional[Path]) -> None:
+            if path is None:
+                return
+            candidate = Path(path)
+            try:
+                if candidate.resolve() != initial_docx and candidate.parent.name == "预览":
+                    candidate.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         selected_field = tk.StringVar(value="room")
         font_name = tk.StringVar(value="宋体")
@@ -2210,19 +2232,24 @@ class VoteDocxApp(tk.Tk):
         style_box = ttk.LabelFrame(controls, text="字体与位置", padding=8)
         style_box.pack(fill="x", pady=(8, 0))
         ttk.Label(style_box, text="字体").grid(row=0, column=0, sticky="w", pady=3)
-        ttk.Combobox(
+        font_combo = ttk.Combobox(
             style_box,
             textvariable=font_name,
             values=("宋体", "微软雅黑", "黑体", "仿宋", "楷体", "Arial", "Times New Roman"),
             width=16,
-        ).grid(row=0, column=1, columnspan=2, sticky="ew", pady=3)
+        )
+        font_combo.grid(row=0, column=1, columnspan=2, sticky="ew", pady=3)
         ttk.Label(style_box, text="字号").grid(row=1, column=0, sticky="w", pady=3)
-        ttk.Spinbox(style_box, from_=5, to=72, increment=0.5, textvariable=font_size, width=8).grid(row=1, column=1, sticky="w", pady=3)
-        ttk.Checkbutton(style_box, text="粗体", variable=font_bold).grid(row=1, column=2, sticky="w", pady=3)
+        font_size_spin = ttk.Spinbox(style_box, from_=5, to=72, increment=0.5, textvariable=font_size, width=8)
+        font_size_spin.grid(row=1, column=1, sticky="w", pady=3)
+        bold_check = ttk.Checkbutton(style_box, text="粗体", variable=font_bold)
+        bold_check.grid(row=1, column=2, sticky="w", pady=3)
         ttk.Label(style_box, text="横向偏移(pt)").grid(row=2, column=0, sticky="w", pady=3)
-        ttk.Spinbox(style_box, from_=-100, to=100, increment=1, textvariable=offset_x, width=8).grid(row=2, column=1, columnspan=2, sticky="w", pady=3)
+        offset_x_spin = ttk.Spinbox(style_box, from_=-100, to=100, increment=1, textvariable=offset_x, width=8)
+        offset_x_spin.grid(row=2, column=1, columnspan=2, sticky="w", pady=3)
         ttk.Label(style_box, text="纵向偏移(pt)").grid(row=3, column=0, sticky="w", pady=3)
-        ttk.Spinbox(style_box, from_=-100, to=100, increment=1, textvariable=offset_y, width=8).grid(row=3, column=1, columnspan=2, sticky="w", pady=3)
+        offset_y_spin = ttk.Spinbox(style_box, from_=-100, to=100, increment=1, textvariable=offset_y, width=8)
+        offset_y_spin.grid(row=3, column=1, columnspan=2, sticky="w", pady=3)
         nudge_box = ttk.Frame(style_box)
         nudge_box.grid(row=4, column=0, columnspan=3, pady=(6, 2))
         style_box.columnconfigure(1, weight=1)
@@ -2231,7 +2258,7 @@ class VoteDocxApp(tk.Tk):
         apply_button.pack(fill="x", pady=(8, 0))
         ttk.Label(
             controls,
-            text="方向按钮每次移动 1pt；红框是当前字段在 PDF 中的位置，可直接拖动。每次调整都会重新生成 Word→PDF。",
+            text="方向按钮每次移动 1pt；也可直接拖动红框。文字和红框会即时移动，停手后自动生成精确的 Word→PDF 打印预览。",
             wraplength=245,
             foreground="#4b5563",
         ).pack(anchor="w", pady=(8, 0))
@@ -2275,22 +2302,35 @@ class VoteDocxApp(tk.Tk):
                 size = float(font_size.get() or 10)
             except Exception:
                 size = 10.0
+            try:
+                current_offset_x = float(offset_x.get() or 0)
+            except Exception:
+                current_offset_x = 0.0
+            try:
+                current_offset_y = float(offset_y.get() or 0)
+            except Exception:
+                current_offset_y = 0.0
             return {
                 "fontName": font_name.get().strip() or "宋体",
                 "fontSize": max(5.0, min(72.0, size)),
                 "bold": bool(font_bold.get()),
-                "offsetX": float(offset_x.get() or 0),
-                "offsetY": float(offset_y.get() or 0),
+                "offsetX": current_offset_x,
+                "offsetY": current_offset_y,
             }
 
         def field_pdf_matches(field: str, value: str) -> List[Dict[str, float]]:
+            cache_key = (field, value)
+            if cache_key in match_cache:
+                return match_cache[cache_key]
             matches = search_pdf_text(current_pdf, value)
             if field not in {"building", "roomNo"} or not matches:
+                match_cache[cache_key] = matches
                 return matches
             counterpart_field = "roomNo" if field == "building" else "building"
             counterpart_value = preview_value(counterpart_field)
             counterpart_matches = search_pdf_text(current_pdf, counterpart_value) if counterpart_value else []
             if not counterpart_matches:
+                match_cache[cache_key] = matches
                 return matches
 
             def score(match: Dict[str, float]) -> float:
@@ -2309,13 +2349,122 @@ class VoteDocxApp(tk.Tk):
                     best = min(best, distance + direction_penalty)
                 return best
 
-            return [min(matches, key=score)]
+            selected_matches = [min(matches, key=score)]
+            match_cache[cache_key] = selected_matches
+            return selected_matches
+
+        def pdf_style_for_field(field: str) -> Dict[str, Any]:
+            style = {"fontName": "宋体", "fontSize": 10, "bold": False, "offsetX": 0, "offsetY": 0}
+            style.update(pdf_field_styles.get(field, {}) or {})
+            return style
+
+        def styles_match(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+            return (
+                str(left.get("fontName") or "宋体") == str(right.get("fontName") or "宋体")
+                and abs(float(left.get("fontSize") or 10) - float(right.get("fontSize") or 10)) < 0.01
+                and bool(left.get("bold", False)) == bool(right.get("bold", False))
+                and abs(float(left.get("offsetX") or 0) - float(right.get("offsetX") or 0)) < 0.01
+                and abs(float(left.get("offsetY") or 0) - float(right.get("offsetY") or 0)) < 0.01
+            )
+
+        def page_background_color(page_index: int, match: Dict[str, float]) -> str:
+            try:
+                image = rendered_images[page_index]
+                candidates = []
+                for point_x, point_y in (
+                    (match["x0"] - 2, match["y0"] - 2),
+                    (match["x1"] + 2, match["y0"] - 2),
+                    (match["x0"] - 2, match["y1"] + 2),
+                    (match["x1"] + 2, match["y1"] + 2),
+                ):
+                    sample_x = max(0, min(image.width - 1, int(point_x * render_zoom)))
+                    sample_y = max(0, min(image.height - 1, int(point_y * render_zoom)))
+                    candidates.append(image.getpixel((sample_x, sample_y)))
+                pixel = max(
+                    candidates,
+                    key=lambda item: int(item) * 3 if isinstance(item, int) else sum(item[:3]),
+                )
+                if isinstance(pixel, int):
+                    return f"#{pixel:02x}{pixel:02x}{pixel:02x}"
+                red, green, blue = pixel[:3]
+                return f"#{red:02x}{green:02x}{blue:02x}"
+            except Exception:
+                return "#ffffff"
+
+        def paint_selected_field(force_live: bool = False):
+            nonlocal overlay_items
+            canvas.delete("field_overlay")
+            overlay_items = []
+            field = selected_field.get()
+            value = preview_value(field)
+            if not value or not current_pdf.exists():
+                return
+            try:
+                displayed_style = current_style()
+                exact_style = pdf_style_for_field(field)
+                show_live_value = force_live or not styles_match(displayed_style, exact_style)
+                delta_x = float(displayed_style.get("offsetX") or 0) - float(exact_style.get("offsetX") or 0)
+                delta_y = float(displayed_style.get("offsetY") or 0) - float(exact_style.get("offsetY") or 0)
+                for match in field_pdf_matches(field, value):
+                    page_index = int(match["page"])
+                    if page_index >= len(page_origins):
+                        continue
+                    origin_x, origin_y = page_origins[page_index]
+                    exact_x1 = origin_x + match["x0"] * render_zoom
+                    exact_y1 = origin_y + match["y0"] * render_zoom
+                    exact_x2 = origin_x + match["x1"] * render_zoom
+                    exact_y2 = origin_y + match["y1"] * render_zoom
+                    if show_live_value:
+                        background = page_background_color(page_index, match)
+                        canvas.create_rectangle(
+                            exact_x1 - 3,
+                            exact_y1 - 3,
+                            exact_x2 + 3,
+                            exact_y2 + 3,
+                            fill=background,
+                            outline=background,
+                            tags=("field_overlay",),
+                        )
+                        live_x = exact_x1 + delta_x * render_zoom
+                        live_y = exact_y1 + delta_y * render_zoom
+                        font_pixels = max(6, int(round(float(displayed_style.get("fontSize") or 10) * render_zoom)))
+                        font_weight = "bold" if bool(displayed_style.get("bold", False)) else "normal"
+                        text_id = canvas.create_text(
+                            live_x,
+                            live_y,
+                            anchor="nw",
+                            text=value,
+                            fill="#111827",
+                            font=(str(displayed_style.get("fontName") or "宋体"), -font_pixels, font_weight),
+                            tags=("field_overlay",),
+                        )
+                        text_box = canvas.bbox(text_id)
+                        if text_box:
+                            x1, y1, x2, y2 = text_box
+                        else:
+                            x1 = exact_x1 + delta_x * render_zoom
+                            y1 = exact_y1 + delta_y * render_zoom
+                            x2 = exact_x2 + delta_x * render_zoom
+                            y2 = exact_y2 + delta_y * render_zoom
+                    else:
+                        x1, y1, x2, y2 = exact_x1, exact_y1, exact_x2, exact_y2
+                    border_id = canvas.create_rectangle(
+                        x1 - 3,
+                        y1 - 3,
+                        x2 + 3,
+                        y2 + 3,
+                        outline="#dc2626",
+                        width=2,
+                        tags=("field_overlay",),
+                    )
+                    overlay_items.append({"id": border_id, "x1": x1 - 3, "y1": y1 - 3, "x2": x2 + 3, "y2": y2 + 3})
+            except Exception:
+                return
 
         def paint_canvas():
-            nonlocal page_origins, overlay_items
+            nonlocal page_origins
             canvas.delete("all")
             page_origins = []
-            overlay_items = []
             photos = []
             y = 24
             max_width = 0
@@ -2330,80 +2479,208 @@ class VoteDocxApp(tk.Tk):
                 y += image.height + 34
                 max_width = max(max_width, image.width)
             dialog.preview_image_tk = photos
-            value = preview_value(selected_field.get())
-            if value and current_pdf.exists():
-                try:
-                    for match in field_pdf_matches(selected_field.get(), value):
-                        page_index = int(match["page"])
-                        if page_index >= len(page_origins):
-                            continue
-                        origin_x, origin_y = page_origins[page_index]
-                        x1 = origin_x + match["x0"] * render_zoom - 3
-                        y1 = origin_y + match["y0"] * render_zoom - 3
-                        x2 = origin_x + match["x1"] * render_zoom + 3
-                        y2 = origin_y + match["y1"] * render_zoom + 3
-                        item_id = canvas.create_rectangle(x1, y1, x2, y2, outline="#dc2626", width=2)
-                        overlay_items.append({"id": item_id, "x1": x1, "y1": y1, "x2": x2, "y2": y2})
-                except Exception:
-                    pass
+            paint_selected_field()
             canvas.configure(scrollregion=(0, 0, max_width + 48, max(200, y)))
 
-        def render_current():
-            nonlocal current_pdf, rendered_images, page_info, render_zoom
+        def selected_zoom() -> Tuple[int, float]:
             try:
                 percent = max(40, min(250, int(float(zoom_percent.get() or 100))))
             except Exception:
                 percent = 100
-            render_zoom = 1.25 * percent / 100.0
-            current_pdf = docx_to_pdf(current_docx)
+            return percent, 1.25 * percent / 100.0
+
+        def render_current_pdf():
+            nonlocal rendered_images, page_info, render_zoom
+            _percent, render_zoom = selected_zoom()
             rendered_images, page_info = render_pdf_pages(current_pdf, zoom=render_zoom)
             paper_text.set(page_info[0]["label"] if page_info else "未识别纸张")
             paint_canvas()
 
-        def load_field_controls(*_args):
-            selection = field_list.curselection()
-            if selection:
-                selected_field.set(field_choices[int(selection[0])][0])
-            style = style_for_field(selected_field.get())
-            font_name.set(str(style.get("fontName") or "宋体"))
-            font_size.set(str(style.get("fontSize") or 10))
-            font_bold.set(bool(style.get("bold", False)))
-            offset_x.set(float(style.get("offsetX") or 0))
-            offset_y.set(float(style.get("offsetY") or 0))
-            paint_canvas()
+        def set_confirm_enabled(enabled: bool):
+            if confirm_button is not None and confirm_button.winfo_exists():
+                confirm_button.configure(state="normal" if enabled else "disabled")
 
-        def apply_and_refresh(push_undo: bool = True):
-            nonlocal current_docx
-            if push_undo:
+        def begin_change_group():
+            if not refresh_state["changeGroupOpen"]:
                 self.push_undo_state("调整用户信息字体/位置")
+                refresh_state["changeGroupOpen"] = True
+
+        def store_current_style():
             self.mapping.setdefault("fieldStyles", {})[selected_field.get()] = current_style()
-            preview_status.set("正在重新生成 Word 和 PDF 打印预览……")
-            dialog.update_idletasks()
-            try:
-                current_docx, refreshed_warnings = generate_preview_docx(
-                    self.template_path.get(), self.data_path.get(), self.mapping, self.output_dir.get()
+
+        def finish_exact_refresh(
+            token: int,
+            mapping_snapshot: Dict[str, Any],
+            generated_docx: Optional[Path],
+            generated_pdf: Optional[Path],
+            generated_images: Optional[List[Image.Image]],
+            generated_page_info: Optional[List[Dict[str, Any]]],
+            generated_zoom: float,
+            refreshed_warnings: List[str],
+            error: Optional[Exception],
+        ):
+            nonlocal current_docx, current_pdf, rendered_images, page_info, render_zoom, pdf_field_styles
+            refresh_state["running"] = False
+            if refresh_state["closed"] or not dialog.winfo_exists():
+                remove_intermediate_docx(generated_docx)
+                if generated_pdf is not None and generated_pdf.name.startswith(".live-preview-"):
+                    generated_pdf.unlink(missing_ok=True)
+                return
+            if token != refresh_state["requested"]:
+                remove_intermediate_docx(generated_docx)
+                if generated_pdf is not None and generated_pdf.name.startswith(".live-preview-"):
+                    generated_pdf.unlink(missing_ok=True)
+                dialog.after(0, start_exact_refresh)
+                return
+            if error is not None or generated_docx is None or generated_pdf is None or generated_images is None or generated_page_info is None:
+                remove_intermediate_docx(generated_docx)
+                refresh_state["changeGroupOpen"] = False
+                preview_status.set("精确打印预览生成失败，请重试。")
+                set_confirm_enabled(False)
+                messagebox.showerror("打印预览刷新失败", str(error or "未知错误"), parent=dialog)
+                return
+            previous_docx = current_docx
+            previous_pdf = current_pdf
+            current_docx = Path(generated_docx)
+            current_pdf = Path(generated_pdf)
+            rendered_images = generated_images
+            page_info = generated_page_info
+            render_zoom = generated_zoom
+            pdf_field_styles = copy.deepcopy(mapping_snapshot.get("fieldStyles", {}) or {})
+            match_cache.clear()
+            if previous_pdf != current_pdf and previous_pdf.name.startswith(".live-preview-"):
+                previous_pdf.unlink(missing_ok=True)
+            if previous_docx != current_docx:
+                remove_intermediate_docx(previous_docx)
+            _current_percent, current_zoom = selected_zoom()
+            if abs(current_zoom - render_zoom) > 0.001:
+                render_zoom = current_zoom
+                rendered_images, page_info = render_pdf_pages(current_pdf, zoom=render_zoom)
+            for item in refreshed_warnings:
+                if item not in warnings:
+                    warnings.append(item)
+            paper_text.set(page_info[0]["label"] if page_info else "未识别纸张")
+            paint_canvas()
+            refresh_state["changeGroupOpen"] = False
+            preview_status.set("精确打印预览已更新，当前画面与 Word 打印结果一致。")
+            set_confirm_enabled(True)
+
+        def start_exact_refresh():
+            if refresh_state["closed"] or refresh_state["running"]:
+                return
+            refresh_state["afterId"] = None
+            token = int(refresh_state["requested"])
+            if token <= 0:
+                return
+            refresh_state["running"] = True
+            mapping_snapshot = copy.deepcopy(self.mapping)
+            _percent, worker_zoom = selected_zoom()
+            template_path = self.template_path.get()
+            data_path = self.data_path.get()
+            output_dir = self.output_dir.get()
+            preview_status.set("正在后台生成精确的 Word→PDF 打印预览……")
+
+            def worker():
+                generated_docx: Optional[Path] = None
+                generated_pdf: Optional[Path] = None
+                generated_images: Optional[List[Image.Image]] = None
+                generated_page_info: Optional[List[Dict[str, Any]]] = None
+                refreshed_warnings: List[str] = []
+                error: Optional[Exception] = None
+                try:
+                    generated_docx, refreshed_warnings = generate_preview_docx(
+                        template_path, data_path, mapping_snapshot, output_dir
+                    )
+                    generated_pdf = docx_to_pdf(
+                        generated_docx,
+                        Path(output_dir) / "预览" / f".live-preview-{token}.pdf",
+                    )
+                    generated_images, generated_page_info = render_pdf_pages(generated_pdf, zoom=worker_zoom)
+                except Exception as exc:
+                    error = exc
+                self.after(
+                    0,
+                    lambda: finish_exact_refresh(
+                        token,
+                        mapping_snapshot,
+                        generated_docx,
+                        generated_pdf,
+                        generated_images,
+                        generated_page_info,
+                        worker_zoom,
+                        refreshed_warnings,
+                        error,
+                    ),
                 )
-                for item in refreshed_warnings:
-                    if item not in warnings:
-                        warnings.append(item)
-                render_current()
-                preview_status.set("已按当前字体、位置和纸张重新生成真实打印预览。")
-            except Exception as exc:
-                preview_status.set("刷新失败。")
-                messagebox.showerror("打印预览刷新失败", str(exc), parent=dialog)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def queue_exact_refresh(delay_ms: int = 450, push_undo: bool = True):
+            if refresh_state["closed"] or controls_loading:
+                return
+            if push_undo:
+                begin_change_group()
+            store_current_style()
+            refresh_state["requested"] += 1
+            set_confirm_enabled(False)
+            paint_selected_field(force_live=True)
+            preview_status.set("位置已实时显示；停手后将自动校准为精确打印效果。")
+            after_id = refresh_state.get("afterId")
+            if after_id is not None:
+                try:
+                    dialog.after_cancel(after_id)
+                except Exception:
+                    pass
+            refresh_state["afterId"] = dialog.after(max(0, delay_ms), start_exact_refresh)
+
+        def load_field_controls(*_args):
+            nonlocal controls_loading
+            controls_loading = True
+            try:
+                selection = field_list.curselection()
+                if selection:
+                    selected_field.set(field_choices[int(selection[0])][0])
+                style = style_for_field(selected_field.get())
+                font_name.set(str(style.get("fontName") or "宋体"))
+                font_size.set(str(style.get("fontSize") or 10))
+                font_bold.set(bool(style.get("bold", False)))
+                offset_x.set(float(style.get("offsetX") or 0))
+                offset_y.set(float(style.get("offsetY") or 0))
+            finally:
+                controls_loading = False
+            paint_selected_field()
+
+        def on_style_control_changed(*_args):
+            queue_exact_refresh()
 
         def nudge(dx: int, dy: int):
-            offset_x.set(float(offset_x.get() or 0) + dx)
-            offset_y.set(float(offset_y.get() or 0) + dy)
-            apply_and_refresh()
+            try:
+                next_x = float(offset_x.get() or 0) + dx
+            except Exception:
+                next_x = float(dx)
+            try:
+                next_y = float(offset_y.get() or 0) + dy
+            except Exception:
+                next_y = float(dy)
+            offset_x.set(next_x)
+            offset_y.set(next_y)
+            queue_exact_refresh(delay_ms=300)
 
         ttk.Button(nudge_box, text="↑", width=4, command=lambda: nudge(0, -1)).grid(row=0, column=1, padx=2, pady=2)
         ttk.Button(nudge_box, text="←", width=4, command=lambda: nudge(-1, 0)).grid(row=1, column=0, padx=2, pady=2)
         ttk.Button(nudge_box, text="→", width=4, command=lambda: nudge(1, 0)).grid(row=1, column=2, padx=2, pady=2)
         ttk.Button(nudge_box, text="↓", width=4, command=lambda: nudge(0, 1)).grid(row=2, column=1, padx=2, pady=2)
-        apply_button.configure(command=apply_and_refresh)
+        apply_button.configure(command=lambda: queue_exact_refresh(delay_ms=0))
         field_list.bind("<<ListboxSelect>>", load_field_controls)
-        zoom_combo.bind("<<ComboboxSelected>>", lambda _event: render_current())
+        font_combo.bind("<<ComboboxSelected>>", on_style_control_changed)
+        font_combo.bind("<KeyRelease>", on_style_control_changed)
+        bold_check.configure(command=on_style_control_changed)
+        for spinbox in (font_size_spin, offset_x_spin, offset_y_spin):
+            spinbox.configure(command=on_style_control_changed)
+            spinbox.bind("<KeyRelease>", on_style_control_changed)
+            spinbox.bind("<Return>", on_style_control_changed)
+            spinbox.bind("<FocusOut>", on_style_control_changed)
+        zoom_combo.bind("<<ComboboxSelected>>", lambda _event: render_current_pdf())
 
         def fit_width():
             if not page_info:
@@ -2412,15 +2689,24 @@ class VoteDocxApp(tk.Tk):
             available = max(300, canvas.winfo_width() - 70)
             factor = available / max(1.0, float(page_info[0]["widthPoints"]))
             zoom_percent.set(str(max(40, min(250, int(round(factor / 1.25 * 100))))))
-            render_current()
+            render_current_pdf()
 
         fit_button.configure(command=fit_width)
 
         def on_canvas_press(event):
             mouse_x, mouse_y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+            drag_state.clear()
             for overlay in reversed(overlay_items):
                 if overlay["x1"] <= mouse_x <= overlay["x2"] and overlay["y1"] <= mouse_y <= overlay["y2"]:
-                    drag_state.update({"overlay": overlay, "startX": mouse_x, "startY": mouse_y, "baseX": float(offset_x.get() or 0), "baseY": float(offset_y.get() or 0)})
+                    drag_state.update(
+                        {
+                            "startX": mouse_x,
+                            "startY": mouse_y,
+                            "baseX": float(offset_x.get() or 0),
+                            "baseY": float(offset_y.get() or 0),
+                            "moved": False,
+                        }
+                    )
                     return
 
         def on_canvas_drag(event):
@@ -2428,15 +2714,22 @@ class VoteDocxApp(tk.Tk):
                 return
             dx = canvas.canvasx(event.x) - drag_state["startX"]
             dy = canvas.canvasy(event.y) - drag_state["startY"]
-            overlay = drag_state["overlay"]
-            canvas.coords(overlay["id"], overlay["x1"] + dx, overlay["y1"] + dy, overlay["x2"] + dx, overlay["y2"] + dy)
+            if not drag_state["moved"]:
+                begin_change_group()
+                drag_state["moved"] = True
+                set_confirm_enabled(False)
             offset_x.set(round(drag_state["baseX"] + dx / render_zoom, 1))
             offset_y.set(round(drag_state["baseY"] + dy / render_zoom, 1))
+            store_current_style()
+            paint_selected_field(force_live=True)
+            preview_status.set("正在实时移动字段；松开鼠标后自动生成精确打印预览。")
 
         def on_canvas_release(_event):
             if drag_state:
+                moved = bool(drag_state.get("moved"))
                 drag_state.clear()
-                apply_and_refresh()
+                if moved:
+                    queue_exact_refresh(delay_ms=120, push_undo=False)
 
         canvas.bind("<ButtonPress-1>", on_canvas_press)
         canvas.bind("<B1-Motion>", on_canvas_drag)
@@ -2460,6 +2753,20 @@ class VoteDocxApp(tk.Tk):
         footer.pack(side="bottom", fill="x")
         ttk.Label(footer, textvariable=preview_status, foreground="#374151").pack(side="left")
 
+        def close_preview_dialog(keep_current_docx: bool = False):
+            refresh_state["closed"] = True
+            after_id = refresh_state.get("afterId")
+            if after_id is not None:
+                try:
+                    dialog.after_cancel(after_id)
+                except Exception:
+                    pass
+            if current_pdf.name.startswith(".live-preview-"):
+                current_pdf.unlink(missing_ok=True)
+            if not keep_current_docx:
+                remove_intermediate_docx(current_docx)
+            dialog.destroy()
+
         def reject_preview():
             self.preview_ready = False
             self.preview_path = None
@@ -2468,18 +2775,22 @@ class VoteDocxApp(tk.Tk):
             self.mark_workflow_done("debug")
             self.reset_workflow_after("debug_done", "preview", "export")
             self.status_text.set("预览未确认，可以继续调整模板标注。")
-            dialog.destroy()
+            close_preview_dialog()
 
         def confirm_preview():
+            if refresh_state["running"] or refresh_state.get("afterId") is not None:
+                messagebox.showinfo("请稍候", "精确打印预览仍在生成，请完成后再确认。", parent=dialog)
+                return
             self.preview_ready = True
             self.preview_path = current_docx
             self.mark_workflow_done("preview")
             self.status_text.set("预览已确认，可以点击“开始导出”。")
             self.log(f"真实打印预览已确认：{current_docx}；{paper_text.get()}")
-            dialog.destroy()
+            close_preview_dialog(keep_current_docx=True)
 
         ttk.Button(footer, text="返回修改", command=reject_preview).pack(side="right", padx=(8, 0))
-        ttk.Button(footer, text="确认预览，允许导出", command=confirm_preview).pack(side="right")
+        confirm_button = ttk.Button(footer, text="确认预览，允许导出", command=confirm_preview)
+        confirm_button.pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", reject_preview)
         load_field_controls()
         dialog.focus_set()
@@ -2494,7 +2805,7 @@ class VoteDocxApp(tk.Tk):
             messagebox.showwarning("缺少文件", "请先选择模板和数据源。")
             return None
         if not self.debug_completed:
-            messagebox.showwarning("调试未完成", "请先点击“调试模板”完成标注，然后点击顶部“4 调试完成”。")
+            messagebox.showwarning("模板设置未完成", "请先点击“设置模板”完成标注，然后点击顶部“4 确认设置”。")
             return None
         self.sync_validation_to_mapping(invalidate=False)
         if not configured_option_keys(self.mapping):
@@ -2524,7 +2835,7 @@ class VoteDocxApp(tk.Tk):
             messagebox.showwarning("缺少文件", "请先选择模板和数据源。")
             return
         if not self.debug_completed:
-            messagebox.showwarning("调试未完成", "请先点击“调试模板”完成标注，然后点击顶部“4 调试完成”。")
+            messagebox.showwarning("模板设置未完成", "请先点击“设置模板”完成标注，然后点击顶部“4 确认设置”。")
             return
         self.sync_validation_to_mapping(invalidate=False)
         if not configured_option_keys(self.mapping):
@@ -2578,7 +2889,7 @@ class VoteDocxApp(tk.Tk):
     def check_for_updates(self):
         if self.update_button is not None:
             self.update_button.configure(state="disabled", text="检查中...")
-        self.log(f"正在从 GitHub 检查开发更新，当前版本：v{APP_VERSION}")
+        self.log(f"正在从 GitHub 检查更新，当前版本：v{APP_VERSION}")
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
 
     def _check_for_updates_worker(self):
@@ -2592,7 +2903,7 @@ class VoteDocxApp(tk.Tk):
 
     def _finish_update_check(self, release: Optional[ReleaseInfo], error_message: str):
         if self.update_button is not None:
-            self.update_button.configure(state="normal", text="开发更新")
+            self.update_button.configure(state="normal", text="检查更新")
 
         if error_message:
             self.log(f"GitHub 更新检查失败：{error_message}")
@@ -2611,9 +2922,9 @@ class VoteDocxApp(tk.Tk):
             notes = release.body.strip() or "本次发布未填写更新说明。"
             if len(notes) > 600:
                 notes = notes[:600].rstrip() + "..."
-            self.log(f"发现开发更新：v{latest_version}（当前 v{APP_VERSION}）")
+            self.log(f"发现新版本：v{latest_version}（当前 v{APP_VERSION}）")
             if messagebox.askyesno(
-                "发现开发更新",
+                "发现新版本",
                 f"当前版本：v{APP_VERSION}\n最新版本：v{latest_version}\n\n{notes}\n\n是否打开 GitHub 下载页？",
             ):
                 webbrowser.open(release.html_url)
