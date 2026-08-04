@@ -36,6 +36,7 @@ from vote_core import (
     normalize_result_name,
     record_parse_options,
     read_vote_records,
+    select_preview_record,
     split_room_value,
     target_label,
     validate_vote_record,
@@ -2175,6 +2176,7 @@ class VoteDocxApp(tk.Tk):
         zoom_percent = tk.StringVar(value="100")
         paper_text = tk.StringVar(value=page_info[0]["label"] if page_info else "未识别纸张")
         preview_status = tk.StringVar(value="由 Word 直接导出 PDF，纸张、分页和打印版一致。")
+        preview_record, _preview_reasons = select_preview_record(self.records, self.mapping)
 
         header = ttk.Frame(dialog, padding=(12, 10))
         header.pack(side="top", fill="x")
@@ -2253,9 +2255,9 @@ class VoteDocxApp(tk.Tk):
         canvas_box.columnconfigure(0, weight=1)
 
         def preview_value(field: str) -> str:
-            if not self.records:
+            if preview_record is None:
                 return ""
-            record = self.records[0]
+            record = preview_record
             if field in {"building", "roomNo"}:
                 parts = split_room_value(record.room)
                 if parts:

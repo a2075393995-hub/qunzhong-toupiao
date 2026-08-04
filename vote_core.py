@@ -2247,15 +2247,7 @@ def generate_preview_docx(
     output_dir: str | Path,
 ) -> Tuple[Path, List[str]]:
     records = read_vote_records_for_mapping(data_path, mapping)
-    preview_record: Optional[VoteRecord] = None
-    preview_reasons: List[str] = []
-    for record in records:
-        reasons = validate_vote_record(record, mapping)
-        if not reasons:
-            preview_record = record
-            break
-        if not preview_reasons:
-            preview_reasons = reasons
+    preview_record, preview_reasons = select_preview_record(records, mapping)
 
     if preview_record is None:
         if records:
@@ -2264,6 +2256,21 @@ def generate_preview_docx(
 
     preview_dir = Path(output_dir) / "预览"
     return generate_docx_for_record(template_path, mapping, preview_record, preview_dir)
+
+
+def select_preview_record(
+    records: Iterable[VoteRecord],
+    mapping: Dict[str, Any],
+) -> Tuple[Optional[VoteRecord], List[str]]:
+    """Choose exactly the same first valid record for DOCX and UI preview."""
+    first_reasons: List[str] = []
+    for record in records:
+        reasons = validate_vote_record(record, mapping)
+        if not reasons:
+            return record, []
+        if not first_reasons:
+            first_reasons = reasons
+    return None, first_reasons
 
 
 def convert_doc_to_docx(path: str | Path, output_dir: str | Path) -> Path:

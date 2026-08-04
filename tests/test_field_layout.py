@@ -7,7 +7,7 @@ from pathlib import Path
 from docx import Document
 from docx.oxml.ns import qn
 
-from vote_core import VoteRecord, apply_field_targets, blank_mapping, infer_field_targets, split_room_value
+from vote_core import VoteRecord, apply_field_targets, blank_mapping, infer_field_targets, select_preview_record, split_room_value
 
 
 class FieldLayoutTests(unittest.TestCase):
@@ -67,6 +67,15 @@ class FieldLayoutTests(unittest.TestCase):
         mapping["fieldTargets"]["room"] = {"table": 0, "row": 0, "col": 1}
         apply_field_targets(document, mapping, self.record())
         self.assertEqual("1-101", table.cell(0, 1).text)
+
+    def test_preview_uses_first_valid_record_for_document_and_overlay(self):
+        mapping = blank_mapping()
+        mapping["validation"].update({"mode": "range", "min": 1, "max": 3})
+        invalid = VoteRecord(2, "1-101", "废票行", "13000000000", [], {})
+        valid = VoteRecord(3, "2-202", "有效行", "13100000000", ["选项1"], {})
+        selected, reasons = select_preview_record([invalid, valid], mapping)
+        self.assertIs(selected, valid)
+        self.assertEqual([], reasons)
 
 
 if __name__ == "__main__":
