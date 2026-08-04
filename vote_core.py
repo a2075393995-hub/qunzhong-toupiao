@@ -34,6 +34,8 @@ FIELD_ALIASES = {
 }
 
 FIELD_LABELS = {
+    "building": "楼栋",
+    "roomNo": "房号",
     "room": "房号/地址",
     "name": "姓名",
     "phone": "电话号码",
@@ -423,6 +425,68 @@ def set_cell_text(cell, text: str, size_pt: float = 12, bold: bool = False, alig
     paragraph.alignment = align
     run = paragraph.add_run(text)
     set_east_asia_font(run, size_pt=size_pt, bold=bold)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def default_field_style() -> Dict[str, Any]:
+    return {"fontName": "宋体", "fontSize": 10, "bold": False, "offsetX": 0, "offsetY": 0}
+
+
+def normalized_field_style(style: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    result = default_field_style()
+    result.update(style or {})
+    try:
+        result["fontSize"] = max(5.0, min(72.0, float(result.get("fontSize") or 10)))
+    except Exception:
+        result["fontSize"] = 10.0
+    for key in ("offsetX", "offsetY"):
+        try:
+            result[key] = max(-100.0, min(100.0, float(result.get(key) or 0)))
+        except Exception:
+            result[key] = 0.0
+    result["fontName"] = str(result.get("fontName") or "宋体").strip() or "宋体"
+    result["bold"] = bool(result.get("bold", False))
+    return result
+
+
+def set_run_vertical_offset(run, offset_y: float) -> None:
+    run_properties = run._r.get_or_add_rPr()
+    position = run_properties.find(qn("w:position"))
+    if abs(float(offset_y or 0)) < 0.01:
+        if position is not None:
+            run_properties.remove(position)
+        return
+    if position is None:
+        position = OxmlElement("w:position")
+        run_properties.append(position)
+    # Word stores character position in half-points. Positive UI Y means down.
+    position.set(qn("w:val"), str(int(round(-float(offset_y) * 2))))
+
+
+def apply_field_run_style(run, style: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    normalized = normalized_field_style(style)
+    set_east_asia_font(
+        run,
+        font_name=normalized["fontName"],
+        size_pt=normalized["fontSize"],
+        bold=normalized["bold"],
+    )
+    set_run_vertical_offset(run, normalized["offsetY"])
+    return normalized
+
+
+def set_field_cell_text(cell, text: str, style: Optional[Dict[str, Any]] = None) -> None:
+    normalized = normalized_field_style(style)
+    # The chosen cell is the field's exact insertion area. Only that cell is
+    # changed; labels, units, borders, row heights and neighboring cells stay.
+    for paragraph in cell.paragraphs:
+        for run in paragraph.runs:
+            run.text = ""
+    paragraph = cell.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.paragraph_format.left_indent = Pt(normalized["offsetX"]) if normalized["offsetX"] else None
+    run = paragraph.add_run(str(text or ""))
+    apply_field_run_style(run, normalized)
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
 
@@ -869,15 +933,31 @@ def infer_field_targets(document) -> Dict[str, Tuple[Dict[str, int], bool, str]]
                 False,
                 alias_hit or text,
             )
+    for field, target_info in infer_address_component_targets(document).items():
+        targets.setdefault(field, target_info)
     return targets
 
 
-def set_labeled_field_text(cell, field: str, value: str, label_text: str) -> None:
+def set_labeled_field_text(
+    cell,
+    field: str,
+    value: str,
+    label_text: str,
+    style: Optional[Dict[str, Any]] = None,
+) -> None:
     aliases = sorted(AUTO_FIELD_ALIASES.get(field, []), key=len, reverse=True)
     text = cell.text.strip() or label_text.strip()
     label = next((alias for alias in aliases if normalize_text(alias) in normalize_text(text)), FIELD_LABELS.get(field, field))
     suffix = "：" if "：" in text else ":"
-    set_cell_text(cell, f"{label}{suffix}{value}", size_pt=12, align=WD_ALIGN_PARAGRAPH.LEFT if field == "room" else WD_ALIGN_PARAGRAPH.CENTER)
+    normalized = normalized_field_style(style)
+    cell.text = ""
+    paragraph = cell.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT if field == "room" else WD_ALIGN_PARAGRAPH.CENTER
+    label_run = paragraph.add_run(f"{label}{suffix}")
+    set_east_asia_font(label_run, size_pt=10)
+    value_run = paragraph.add_run(str(value or ""))
+    apply_field_run_style(value_run, normalized)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
 
 UNDERLINE_PATTERN = re.compile(r"[_＿]{2,}|[—－-]{4,}")
@@ -955,6 +1035,62 @@ def cell_underline_targets(cell, table_index: int, row_index: int, col_index: in
     return sorted(items, key=lambda item: int(item["start"]))
 
 
+def address_component_targets_in_paragraph(
+    paragraph,
+    base_target: Dict[str, Any],
+) -> Dict[str, Tuple[Dict[str, int], bool, str]]:
+    text = paragraph.text or ""
+    underline_items = paragraph_underline_targets(paragraph, base_target)
+    if len(underline_items) < 2:
+        return {}
+    building_positions = [text.find(unit) for unit in ("栋", "幢") if text.find(unit) >= 0]
+    if not building_positions:
+        return {}
+    building_unit = min(building_positions)
+    room_unit = text.find("室", building_unit + 1)
+    if room_unit < 0:
+        return {}
+    building_item = next(
+        (item for item in reversed(underline_items) if int(item["end"]) <= building_unit + 1),
+        None,
+    )
+    room_item = next(
+        (
+            item
+            for item in underline_items
+            if int(item["start"]) >= building_unit and int(item["start"]) < room_unit
+        ),
+        None,
+    )
+    if not building_item or not room_item or building_item["target"] == room_item["target"]:
+        return {}
+    return {
+        "building": (dict(building_item["target"]), False, "楼栋"),
+        "roomNo": (dict(room_item["target"]), False, "房号"),
+    }
+
+
+def infer_address_component_targets(document) -> Dict[str, Tuple[Dict[str, int], bool, str]]:
+    result: Dict[str, Tuple[Dict[str, int], bool, str]] = {}
+    for paragraph_index, paragraph in enumerate(document.paragraphs):
+        base = {"kind": "underline", "paragraph": paragraph_index}
+        result.update({key: value for key, value in address_component_targets_in_paragraph(paragraph, base).items() if key not in result})
+    for table_index, table in enumerate(document.tables):
+        for row_index, row in enumerate(table.rows):
+            for col_index, cell in enumerate(row.cells):
+                for paragraph_index, paragraph in enumerate(cell.paragraphs):
+                    base = {
+                        "kind": "cellUnderline",
+                        "table": table_index,
+                        "row": row_index,
+                        "col": col_index,
+                        "paragraph": paragraph_index,
+                    }
+                    found = address_component_targets_in_paragraph(paragraph, base)
+                    result.update({key: value for key, value in found.items() if key not in result})
+    return result
+
+
 def get_body_paragraph(document, index: int):
     return document.paragraphs[int(index)]
 
@@ -993,41 +1129,68 @@ def display_width(text: str) -> int:
     return width
 
 
-def center_value_for_underline(value: str, template_text: str, min_slots: int = 0) -> str:
+def center_value_for_underline(
+    value: str,
+    template_text: str,
+    min_slots: int = 0,
+    style: Optional[Dict[str, Any]] = None,
+) -> str:
     value = "" if value is None else str(value).strip()
     original = template_text or ""
     # Keep the replacement text length aligned to the original template slot.
     # Counting Chinese unit characters as double-width made fields visibly longer.
     slots = max(len(original), len(value), min_slots)
     padding = max(0, slots - len(value))
-    left = padding // 2
+    normalized = normalized_field_style(style)
+    approximate_space_width = max(2.5, float(normalized["fontSize"]) * 0.5)
+    shift_slots = int(round(float(normalized["offsetX"]) / approximate_space_width))
+    left = max(0, min(padding, padding // 2 + shift_slots))
     right = padding - left
     return f"{' ' * left}{value}{' ' * right}"
 
 
-def replace_run_underline_in_paragraph(paragraph, run_index: int, value: str, centered: bool = False) -> None:
+def replace_run_underline_in_paragraph(
+    paragraph,
+    run_index: int,
+    value: str,
+    centered: bool = False,
+    style: Optional[Dict[str, Any]] = None,
+) -> None:
     runs = paragraph.runs
     if not runs:
-        run = paragraph.add_run(value)
+        run = paragraph.add_run(center_value_for_underline(value, "", style=style) if centered else value)
         if centered:
             run.font.underline = True
+        if style is not None:
+            apply_field_run_style(run, style)
         return
     index = max(0, min(int(run_index), len(runs) - 1))
     run = runs[index]
     original = run.text or ""
-    run.text = center_value_for_underline(value, original) if centered else value
+    run.text = center_value_for_underline(value, original, style=style) if centered else value
     if centered:
         run.font.underline = True
-    set_generated_run_visible(run)
+    if style is not None:
+        apply_field_run_style(run, style)
+    else:
+        set_generated_run_visible(run)
 
 
-def replace_plain_underline_with_run(paragraph, underline_index: int, value: str, centered: bool = False) -> None:
+def replace_plain_underline_with_run(
+    paragraph,
+    underline_index: int,
+    value: str,
+    centered: bool = False,
+    style: Optional[Dict[str, Any]] = None,
+) -> None:
     text = paragraph.text
     matches = list(UNDERLINE_PATTERN.finditer(text))
     if not matches:
-        run = paragraph.add_run(center_value_for_underline(value, "") if centered else value)
+        run = paragraph.add_run(center_value_for_underline(value, "", style=style) if centered else value)
         if centered:
             run.font.underline = True
+        if style is not None:
+            apply_field_run_style(run, style)
         return
     index = max(0, min(int(underline_index), len(matches) - 1))
     match = matches[index]
@@ -1042,11 +1205,15 @@ def replace_plain_underline_with_run(paragraph, underline_index: int, value: str
             matched = run_text[local_start:local_end]
             after_part = run_text[local_end:]
             run.text = before_part
-            value_run = paragraph.add_run(center_value_for_underline(value, matched) if centered else value)
-            set_generated_run_visible(value_run)
+            value_run = paragraph.add_run(center_value_for_underline(value, matched, style=style) if centered else value)
+            if style is not None:
+                apply_field_run_style(value_run, style)
+            else:
+                set_generated_run_visible(value_run)
             if centered:
                 value_run.font.underline = True
-                set_east_asia_font(value_run, size_pt=12)
+                if style is None:
+                    set_east_asia_font(value_run, size_pt=12)
             run._r.addnext(value_run._r)
             if after_part:
                 after_run = paragraph.add_run(after_part)
@@ -1061,11 +1228,15 @@ def replace_plain_underline_with_run(paragraph, underline_index: int, value: str
     for run in paragraph.runs:
         run.text = ""
     first_run.text = before
-    value_run = paragraph.add_run(center_value_for_underline(value, matched) if centered else value)
-    set_generated_run_visible(value_run)
+    value_run = paragraph.add_run(center_value_for_underline(value, matched, style=style) if centered else value)
+    if style is not None:
+        apply_field_run_style(value_run, style)
+    else:
+        set_generated_run_visible(value_run)
     if centered:
         value_run.font.underline = True
-        set_east_asia_font(value_run, size_pt=12)
+        if style is None:
+            set_east_asia_font(value_run, size_pt=12)
     after_run = paragraph.add_run(after)
     copy_run_color(first_run, after_run)
 
@@ -1085,17 +1256,22 @@ def underline_targets_for_same_paragraph(document, target: Dict[str, Any]) -> Li
     return [item["target"] for item in paragraph_underline_targets(paragraph, base)]
 
 
-def replace_field_target(document, target: Dict[str, Any], value: str) -> None:
+def replace_field_target(
+    document,
+    target: Dict[str, Any],
+    value: str,
+    style: Optional[Dict[str, Any]] = None,
+) -> None:
     if target_kind(target) in {"runUnderline", "cellRunUnderline"}:
         paragraph = get_target_paragraph(document, target)
-        replace_run_underline_in_paragraph(paragraph, int(target.get("run", 0)), value, centered=True)
+        replace_run_underline_in_paragraph(paragraph, int(target.get("run", 0)), value, centered=True, style=style)
         return
     if target_kind(target) in {"underline", "cellUnderline"}:
         paragraph = get_target_paragraph(document, target)
-        replace_plain_underline_with_run(paragraph, int(target.get("underline", 0)), value, centered=True)
+        replace_plain_underline_with_run(paragraph, int(target.get("underline", 0)), value, centered=True, style=style)
         return
     cell = get_cell(document, target)
-    set_cell_text(cell, value, size_pt=12, align=WD_ALIGN_PARAGRAPH.CENTER)
+    set_field_cell_text(cell, value, style)
 
 
 def find_first_unit(text: str, units: str) -> int:
@@ -1574,6 +1750,10 @@ def blank_mapping() -> Dict[str, Any]:
         "markText": CHECK_MARK,
         "markStyle": {"horizontal": "center", "vertical": "middle", "fontSize": 10},
         "fieldTargets": {},
+        "fieldStyles": {
+            field: default_field_style()
+            for field in ("building", "roomNo", "room", "name", "phone")
+        },
         "options": {},
         "exportMode": "multi",
         "cleanMode": False,
@@ -1810,7 +1990,11 @@ def export_vote_summary(
 
 
 def apply_field_targets(document, mapping: Dict[str, Any], record: VoteRecord) -> None:
+    room_parts = split_room_value(record.room)
+    building, room_no = room_parts if room_parts else ("", "")
     values = {
+        "building": building,
+        "roomNo": room_no,
         "room": record.room,
         "name": record.name,
         "phone": record.phone,
@@ -1823,9 +2007,12 @@ def apply_field_targets(document, mapping: Dict[str, Any], record: VoteRecord) -
         if field in values
     }
     field_targets = {**inferred, **configured}
-    # Fill trailing fields first. Room replacement can collapse "___幢_____室"
-    # into one underline and remove template residue before the next field.
-    for field in ("name", "phone", "room"):
+    if ("building" in field_targets or "roomNo" in field_targets) and "room" not in configured:
+        field_targets.pop("room", None)
+    field_styles = mapping.get("fieldStyles", {})
+    # Fill the later address slot first. Plain underscore indexes remain valid
+    # after the first replacement, and template units such as 栋/幢/室 stay put.
+    for field in ("name", "phone", "room", "roomNo", "building"):
         target_info = field_targets.get(field)
         if not target_info:
             continue
@@ -1834,20 +2021,20 @@ def apply_field_targets(document, mapping: Dict[str, Any], record: VoteRecord) -
         if not value:
             continue
         try:
+            style = field_styles.get(field) or default_field_style()
             if target_kind(target) in {"runUnderline", "cellRunUnderline", "underline", "cellUnderline"}:
-                if field == "room":
-                    replace_room_field_target(document, target, value, label_text)
-                else:
-                    replace_labeled_field_target(document, target, field, value)
+                # Replace only the exact selected underline. Never collapse the
+                # surrounding label or address units.
+                replace_field_target(document, target, value, style)
             else:
                 cell = get_cell(document, target)
                 if same_cell:
                     if clean_mode:
-                        set_cell_text(cell, value, size_pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+                        set_field_cell_text(cell, value, style)
                     else:
-                        set_labeled_field_text(cell, field, value, label_text)
+                        set_labeled_field_text(cell, field, value, label_text, style)
                 else:
-                    set_cell_text(cell, value, size_pt=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+                    set_field_cell_text(cell, value, style)
         except Exception:
             continue
 

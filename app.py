@@ -17,6 +17,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from print_preview import docx_to_pdf, render_pdf_pages, search_pdf_text
 from update_service import APP_VERSION, REPOSITORY_URL, ReleaseInfo, fetch_latest_release, is_newer_version
 
 from vote_core import (
@@ -35,6 +36,7 @@ from vote_core import (
     normalize_result_name,
     record_parse_options,
     read_vote_records,
+    split_room_value,
     target_label,
     validate_vote_record,
     UNDERLINE_PATTERN,
@@ -127,7 +129,7 @@ class VoteDocxApp(tk.Tk):
         self.brush_mode = tk.StringVar(value="judgment")
         self.custom_option = tk.StringVar()
         self.choice_mode = tk.StringVar(value="single")
-        self.field_keys = ["field:room", "field:name", "field:phone"]
+        self.field_keys = ["field:building", "field:roomNo", "field:room", "field:name", "field:phone"]
         self.field_list = None
         self.selected_key: Optional[str] = None
         self.option_keys: List[str] = []
@@ -533,7 +535,7 @@ class VoteDocxApp(tk.Tk):
 
         field_box = ttk.LabelFrame(left, text="用户信息填入", padding=5)
         field_box.pack(fill="x", expand=False)
-        self.field_list = tk.Listbox(field_box, height=3, selectmode=tk.SINGLE, exportselection=False, font=("Microsoft YaHei UI", 9))
+        self.field_list = tk.Listbox(field_box, height=5, selectmode=tk.SINGLE, exportselection=False, font=("Microsoft YaHei UI", 9))
         self.field_list.pack(fill="x", expand=False)
         for key in self.field_keys:
             field = key.split(":", 1)[1]
@@ -1565,6 +1567,10 @@ class VoteDocxApp(tk.Tk):
             return ""
         if self.records:
             record = self.records[0]
+            if field in {"building", "roomNo"}:
+                parts = split_room_value(record.room)
+                if parts:
+                    return str(parts[0] if field == "building" else parts[1])
             return str(getattr(record, field, "") or FIELD_LABELS.get(field, field))
         return FIELD_LABELS.get(field, field)
 
@@ -2096,7 +2102,7 @@ class VoteDocxApp(tk.Tk):
         import re
 
         if isinstance(value, str) and value.startswith("field:"):
-            order = {"field:room": 0, "field:name": 1, "field:phone": 2, "field:area": 3}
+            order = {"field:building": 0, "field:roomNo": 1, "field:room": 2, "field:name": 3, "field:phone": 4, "field:area": 5}
             return (-1, order.get(value, 99))
         match = re.search(r"(\d+)", value)
         return (0, int(match.group(1))) if match else (1, value)
@@ -2138,27 +2144,105 @@ class VoteDocxApp(tk.Tk):
 
     def show_internal_preview(self, preview_path: Path, warnings: List[str]) -> None:
         try:
-            image, _cells = self.build_print_preview_image_for_path(preview_path, highlight=False)
+            initial_pdf = docx_to_pdf(preview_path)
+            initial_images, initial_page_info = render_pdf_pages(initial_pdf, zoom=1.25)
         except Exception as exc:
-            messagebox.showerror("预览失败", f"预览图生成失败：\n{exc}")
+            messagebox.showerror("真实打印预览失败", str(exc))
             return
 
         dialog = tk.Toplevel(self)
-        dialog.title("导出前预览")
-        dialog.geometry("980x720")
-        dialog.minsize(760, 560)
+        dialog.title("真实打印预览与用户信息调整")
+        dialog.geometry("1220x820")
+        dialog.minsize(980, 650)
         dialog.transient(self)
         dialog.grab_set()
 
+        current_docx = Path(preview_path)
+        current_pdf = Path(initial_pdf)
+        rendered_images = initial_images
+        page_info = initial_page_info
+        render_zoom = 1.25
+        page_origins: List[Tuple[int, int]] = []
+        overlay_items: List[Dict[str, Any]] = []
+        drag_state: Dict[str, Any] = {}
+
+        selected_field = tk.StringVar(value="room")
+        font_name = tk.StringVar(value="宋体")
+        font_size = tk.StringVar(value="10")
+        font_bold = tk.BooleanVar(value=False)
+        offset_x = tk.DoubleVar(value=0)
+        offset_y = tk.DoubleVar(value=0)
+        zoom_percent = tk.StringVar(value="100")
+        paper_text = tk.StringVar(value=page_info[0]["label"] if page_info else "未识别纸张")
+        preview_status = tk.StringVar(value="由 Word 直接导出 PDF，纸张、分页和打印版一致。")
+
         header = ttk.Frame(dialog, padding=(12, 10))
         header.pack(side="top", fill="x")
-        ttk.Label(header, text="请检查下面的预览图，确认无误后再允许导出。").pack(side="left")
+        ttk.Label(header, text="真实打印预览", font=("Microsoft YaHei UI", 12, "bold")).pack(side="left")
+        ttk.Label(header, textvariable=paper_text, foreground="#2563eb").pack(side="left", padx=(16, 0))
         if warnings:
             ttk.Label(header, text=f"有 {len(warnings)} 条提示，详情见处理日志。", foreground="#b45309").pack(side="left", padx=(12, 0))
 
-        canvas_box = ttk.Frame(dialog, padding=(12, 0, 12, 10))
-        canvas_box.pack(side="top", fill="both", expand=True)
-        canvas = tk.Canvas(canvas_box, background="#f3f4f6", highlightthickness=0)
+        body = ttk.PanedWindow(dialog, orient="horizontal")
+        body.pack(side="top", fill="both", expand=True, padx=12)
+        controls = ttk.Frame(body, padding=(0, 0, 12, 0), width=265)
+        canvas_box = ttk.Frame(body)
+        body.add(controls, weight=0)
+        body.add(canvas_box, weight=1)
+
+        field_choices = [
+            ("building", "楼栋（1-101 中的 1）"),
+            ("roomNo", "房号（1-101 中的 101）"),
+            ("room", "完整地址/原始值"),
+            ("name", "姓名"),
+            ("phone", "电话号码"),
+        ]
+        field_box = ttk.LabelFrame(controls, text="用户信息字段", padding=8)
+        field_box.pack(fill="x")
+        field_list = tk.Listbox(field_box, height=5, exportselection=False, font=("Microsoft YaHei UI", 9))
+        field_list.pack(fill="x")
+        for _field, label in field_choices:
+            field_list.insert("end", label)
+        field_list.selection_set(2)
+
+        style_box = ttk.LabelFrame(controls, text="字体与位置", padding=8)
+        style_box.pack(fill="x", pady=(8, 0))
+        ttk.Label(style_box, text="字体").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Combobox(
+            style_box,
+            textvariable=font_name,
+            values=("宋体", "微软雅黑", "黑体", "仿宋", "楷体", "Arial", "Times New Roman"),
+            width=16,
+        ).grid(row=0, column=1, columnspan=2, sticky="ew", pady=3)
+        ttk.Label(style_box, text="字号").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Spinbox(style_box, from_=5, to=72, increment=0.5, textvariable=font_size, width=8).grid(row=1, column=1, sticky="w", pady=3)
+        ttk.Checkbutton(style_box, text="粗体", variable=font_bold).grid(row=1, column=2, sticky="w", pady=3)
+        ttk.Label(style_box, text="横向偏移(pt)").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Spinbox(style_box, from_=-100, to=100, increment=1, textvariable=offset_x, width=8).grid(row=2, column=1, columnspan=2, sticky="w", pady=3)
+        ttk.Label(style_box, text="纵向偏移(pt)").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Spinbox(style_box, from_=-100, to=100, increment=1, textvariable=offset_y, width=8).grid(row=3, column=1, columnspan=2, sticky="w", pady=3)
+        nudge_box = ttk.Frame(style_box)
+        nudge_box.grid(row=4, column=0, columnspan=3, pady=(6, 2))
+        style_box.columnconfigure(1, weight=1)
+
+        apply_button = ttk.Button(controls, text="应用并刷新打印预览")
+        apply_button.pack(fill="x", pady=(8, 0))
+        ttk.Label(
+            controls,
+            text="方向按钮每次移动 1pt；红框是当前字段在 PDF 中的位置，可直接拖动。每次调整都会重新生成 Word→PDF。",
+            wraplength=245,
+            foreground="#4b5563",
+        ).pack(anchor="w", pady=(8, 0))
+        zoom_box = ttk.LabelFrame(controls, text="页面显示", padding=8)
+        zoom_box.pack(fill="x", pady=(8, 0))
+        ttk.Label(zoom_box, text="缩放").pack(side="left")
+        zoom_combo = ttk.Combobox(zoom_box, textvariable=zoom_percent, values=("60", "75", "90", "100", "125", "150", "200"), width=6, state="readonly")
+        zoom_combo.pack(side="left", padx=(6, 4))
+        ttk.Label(zoom_box, text="%").pack(side="left")
+        fit_button = ttk.Button(zoom_box, text="适合宽度")
+        fit_button.pack(side="right")
+
+        canvas = tk.Canvas(canvas_box, background="#d1d5db", highlightthickness=0)
         scroll_y = ttk.Scrollbar(canvas_box, orient="vertical", command=canvas.yview)
         scroll_x = ttk.Scrollbar(canvas_box, orient="horizontal", command=canvas.xview)
         canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
@@ -2168,10 +2252,193 @@ class VoteDocxApp(tk.Tk):
         canvas_box.rowconfigure(0, weight=1)
         canvas_box.columnconfigure(0, weight=1)
 
-        photo = ImageTk.PhotoImage(image)
-        dialog.preview_image_tk = photo
-        canvas.create_image(16, 16, anchor="nw", image=photo)
-        canvas.configure(scrollregion=(0, 0, image.width + 32, image.height + 32))
+        def preview_value(field: str) -> str:
+            if not self.records:
+                return ""
+            record = self.records[0]
+            if field in {"building", "roomNo"}:
+                parts = split_room_value(record.room)
+                if parts:
+                    return str(parts[0] if field == "building" else parts[1])
+                return ""
+            return str(getattr(record, field, "") or "")
+
+        def style_for_field(field: str) -> Dict[str, Any]:
+            style = {"fontName": "宋体", "fontSize": 10, "bold": False, "offsetX": 0, "offsetY": 0}
+            style.update(self.mapping.get("fieldStyles", {}).get(field, {}) or {})
+            return style
+
+        def current_style() -> Dict[str, Any]:
+            try:
+                size = float(font_size.get() or 10)
+            except Exception:
+                size = 10.0
+            return {
+                "fontName": font_name.get().strip() or "宋体",
+                "fontSize": max(5.0, min(72.0, size)),
+                "bold": bool(font_bold.get()),
+                "offsetX": float(offset_x.get() or 0),
+                "offsetY": float(offset_y.get() or 0),
+            }
+
+        def field_pdf_matches(field: str, value: str) -> List[Dict[str, float]]:
+            matches = search_pdf_text(current_pdf, value)
+            if field not in {"building", "roomNo"} or not matches:
+                return matches
+            counterpart_field = "roomNo" if field == "building" else "building"
+            counterpart_value = preview_value(counterpart_field)
+            counterpart_matches = search_pdf_text(current_pdf, counterpart_value) if counterpart_value else []
+            if not counterpart_matches:
+                return matches
+
+            def score(match: Dict[str, float]) -> float:
+                best = float("inf")
+                match_center_y = (match["y0"] + match["y1"]) / 2
+                for other in counterpart_matches:
+                    if int(other["page"]) != int(match["page"]):
+                        continue
+                    other_center_y = (other["y0"] + other["y1"]) / 2
+                    direction_penalty = 0.0
+                    if field == "building" and match["x0"] > other["x0"]:
+                        direction_penalty = 500.0
+                    if field == "roomNo" and match["x0"] < other["x0"]:
+                        direction_penalty = 500.0
+                    distance = abs(match_center_y - other_center_y) * 8 + abs(match["x0"] - other["x0"])
+                    best = min(best, distance + direction_penalty)
+                return best
+
+            return [min(matches, key=score)]
+
+        def paint_canvas():
+            nonlocal page_origins, overlay_items
+            canvas.delete("all")
+            page_origins = []
+            overlay_items = []
+            photos = []
+            y = 24
+            max_width = 0
+            for page_index, image in enumerate(rendered_images):
+                photo = ImageTk.PhotoImage(image)
+                photos.append(photo)
+                x = 24
+                page_origins.append((x, y))
+                canvas.create_rectangle(x - 2, y - 2, x + image.width + 2, y + image.height + 2, fill="#ffffff", outline="#9ca3af")
+                canvas.create_image(x, y, anchor="nw", image=photo)
+                canvas.create_text(x, y - 8, anchor="sw", text=f"第 {page_index + 1} 页", fill="#374151")
+                y += image.height + 34
+                max_width = max(max_width, image.width)
+            dialog.preview_image_tk = photos
+            value = preview_value(selected_field.get())
+            if value and current_pdf.exists():
+                try:
+                    for match in field_pdf_matches(selected_field.get(), value):
+                        page_index = int(match["page"])
+                        if page_index >= len(page_origins):
+                            continue
+                        origin_x, origin_y = page_origins[page_index]
+                        x1 = origin_x + match["x0"] * render_zoom - 3
+                        y1 = origin_y + match["y0"] * render_zoom - 3
+                        x2 = origin_x + match["x1"] * render_zoom + 3
+                        y2 = origin_y + match["y1"] * render_zoom + 3
+                        item_id = canvas.create_rectangle(x1, y1, x2, y2, outline="#dc2626", width=2)
+                        overlay_items.append({"id": item_id, "x1": x1, "y1": y1, "x2": x2, "y2": y2})
+                except Exception:
+                    pass
+            canvas.configure(scrollregion=(0, 0, max_width + 48, max(200, y)))
+
+        def render_current():
+            nonlocal current_pdf, rendered_images, page_info, render_zoom
+            try:
+                percent = max(40, min(250, int(float(zoom_percent.get() or 100))))
+            except Exception:
+                percent = 100
+            render_zoom = 1.25 * percent / 100.0
+            current_pdf = docx_to_pdf(current_docx)
+            rendered_images, page_info = render_pdf_pages(current_pdf, zoom=render_zoom)
+            paper_text.set(page_info[0]["label"] if page_info else "未识别纸张")
+            paint_canvas()
+
+        def load_field_controls(*_args):
+            selection = field_list.curselection()
+            if selection:
+                selected_field.set(field_choices[int(selection[0])][0])
+            style = style_for_field(selected_field.get())
+            font_name.set(str(style.get("fontName") or "宋体"))
+            font_size.set(str(style.get("fontSize") or 10))
+            font_bold.set(bool(style.get("bold", False)))
+            offset_x.set(float(style.get("offsetX") or 0))
+            offset_y.set(float(style.get("offsetY") or 0))
+            paint_canvas()
+
+        def apply_and_refresh(push_undo: bool = True):
+            nonlocal current_docx
+            if push_undo:
+                self.push_undo_state("调整用户信息字体/位置")
+            self.mapping.setdefault("fieldStyles", {})[selected_field.get()] = current_style()
+            preview_status.set("正在重新生成 Word 和 PDF 打印预览……")
+            dialog.update_idletasks()
+            try:
+                current_docx, refreshed_warnings = generate_preview_docx(
+                    self.template_path.get(), self.data_path.get(), self.mapping, self.output_dir.get()
+                )
+                for item in refreshed_warnings:
+                    if item not in warnings:
+                        warnings.append(item)
+                render_current()
+                preview_status.set("已按当前字体、位置和纸张重新生成真实打印预览。")
+            except Exception as exc:
+                preview_status.set("刷新失败。")
+                messagebox.showerror("打印预览刷新失败", str(exc), parent=dialog)
+
+        def nudge(dx: int, dy: int):
+            offset_x.set(float(offset_x.get() or 0) + dx)
+            offset_y.set(float(offset_y.get() or 0) + dy)
+            apply_and_refresh()
+
+        ttk.Button(nudge_box, text="↑", width=4, command=lambda: nudge(0, -1)).grid(row=0, column=1, padx=2, pady=2)
+        ttk.Button(nudge_box, text="←", width=4, command=lambda: nudge(-1, 0)).grid(row=1, column=0, padx=2, pady=2)
+        ttk.Button(nudge_box, text="→", width=4, command=lambda: nudge(1, 0)).grid(row=1, column=2, padx=2, pady=2)
+        ttk.Button(nudge_box, text="↓", width=4, command=lambda: nudge(0, 1)).grid(row=2, column=1, padx=2, pady=2)
+        apply_button.configure(command=apply_and_refresh)
+        field_list.bind("<<ListboxSelect>>", load_field_controls)
+        zoom_combo.bind("<<ComboboxSelected>>", lambda _event: render_current())
+
+        def fit_width():
+            if not page_info:
+                return
+            dialog.update_idletasks()
+            available = max(300, canvas.winfo_width() - 70)
+            factor = available / max(1.0, float(page_info[0]["widthPoints"]))
+            zoom_percent.set(str(max(40, min(250, int(round(factor / 1.25 * 100))))))
+            render_current()
+
+        fit_button.configure(command=fit_width)
+
+        def on_canvas_press(event):
+            mouse_x, mouse_y = canvas.canvasx(event.x), canvas.canvasy(event.y)
+            for overlay in reversed(overlay_items):
+                if overlay["x1"] <= mouse_x <= overlay["x2"] and overlay["y1"] <= mouse_y <= overlay["y2"]:
+                    drag_state.update({"overlay": overlay, "startX": mouse_x, "startY": mouse_y, "baseX": float(offset_x.get() or 0), "baseY": float(offset_y.get() or 0)})
+                    return
+
+        def on_canvas_drag(event):
+            if not drag_state:
+                return
+            dx = canvas.canvasx(event.x) - drag_state["startX"]
+            dy = canvas.canvasy(event.y) - drag_state["startY"]
+            overlay = drag_state["overlay"]
+            canvas.coords(overlay["id"], overlay["x1"] + dx, overlay["y1"] + dy, overlay["x2"] + dx, overlay["y2"] + dy)
+            offset_x.set(round(drag_state["baseX"] + dx / render_zoom, 1))
+            offset_y.set(round(drag_state["baseY"] + dy / render_zoom, 1))
+
+        def on_canvas_release(_event):
+            if drag_state:
+                drag_state.clear()
+                apply_and_refresh()
+
+        canvas.bind("<ButtonPress-1>", on_canvas_press)
+        canvas.bind("<B1-Motion>", on_canvas_drag)
+        canvas.bind("<ButtonRelease-1>", on_canvas_release)
 
         def on_mousewheel(event):
             if getattr(event, "num", None) == 4:
@@ -2189,6 +2456,7 @@ class VoteDocxApp(tk.Tk):
 
         footer = ttk.Frame(dialog, padding=(12, 10))
         footer.pack(side="bottom", fill="x")
+        ttk.Label(footer, textvariable=preview_status, foreground="#374151").pack(side="left")
 
         def reject_preview():
             self.preview_ready = False
@@ -2202,15 +2470,16 @@ class VoteDocxApp(tk.Tk):
 
         def confirm_preview():
             self.preview_ready = True
-            self.preview_path = preview_path
+            self.preview_path = current_docx
             self.mark_workflow_done("preview")
             self.status_text.set("预览已确认，可以点击“开始导出”。")
-            self.log(f"预览已确认：{preview_path}")
+            self.log(f"真实打印预览已确认：{current_docx}；{paper_text.get()}")
             dialog.destroy()
 
         ttk.Button(footer, text="返回修改", command=reject_preview).pack(side="right", padx=(8, 0))
         ttk.Button(footer, text="确认预览，允许导出", command=confirm_preview).pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", reject_preview)
+        load_field_controls()
         dialog.focus_set()
 
     def on_validation_changed(self):

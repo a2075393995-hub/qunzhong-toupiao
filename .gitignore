@@ -19,3 +19,5 @@ output/
 
 .codex_*/
 qa/__pycache__/
+qa/real_preview_test/
+qa/ui_preview/

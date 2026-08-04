@@ -6,7 +6,9 @@
 
 - 导入 Word 模板和 CSV/XLSX 数据。
 - 可视化调试字段位置和投票打勾位置。
-- 导出前预览，确认后再批量生成文档。
+- 使用 Microsoft Word 导出 PDF 的真实打印预览，自动显示纸张尺寸、方向和分页。
+- 在打印预览中分别调整楼栋、房号、完整地址、姓名、电话的字体、字号、粗体和位置。
+- 自动把 `1-101`、`1栋101室` 等地址拆成楼栋与房号，并保留模板原有的“栋/幢/室”和下划线格式。
 - 支持一人一份 DOCX 或合并为单个 DOCX。
 - 支持纯净打印模式、异常数据检查和 XLSX 汇总。
 - 内置“开发更新”按钮，从 GitHub Releases 检查新版本。
@@ -14,6 +16,8 @@
 ## 本地运行
 
 需要 Python 3.10 或更高版本。
+
+真实打印预览优先使用本机 Microsoft Word；未安装 Word 时可安装 LibreOffice 作为备用转换器。
 
 ```powershell
 python -m venv .venv
@@ -46,6 +50,7 @@ python -m PyInstaller --noconfirm --clean VoteDocxApp.spec
 
 - `app.py`：Tkinter 桌面界面和操作流程。
 - `vote_core.py`：数据解析、模板标注和 DOCX/XLSX 导出核心。
+- `print_preview.py`：Word→PDF 固定版式导出、纸张识别和 PDF 页面渲染。
 - `update_service.py`：GitHub Release 检查与版本比较。
 - `qa/`：模板和界面回归辅助脚本。
 - `tests/`：可独立运行的单元测试。
