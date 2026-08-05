@@ -195,6 +195,75 @@ def matching_pairs_for_selection(config: Dict[str, Any], selected_option: str) -
     return matches
 
 
+def result_option_config(
+    options: Dict[str, Any],
+    result_name: str,
+    selected_option: str,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    for key in (result_name, make_result_option_key(result_name, selected_option), selected_option):
+        config = options.get(key)
+        if isinstance(config, dict):
+            return key, config
+    return None, None
+
+
+def pairs_for_result_selection(
+    config_key: str,
+    result_name: str,
+    config: Dict[str, Any],
+    selected_option: str,
+) -> List[Dict[str, Any]]:
+    if config_key == result_name:
+        return matching_pairs_for_selection(config, selected_option)
+    return config_pairs(config)
+
+
+def selected_mark_pair_refs(record: VoteRecord, mapping: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the configured mark pairs that are visible for this record's print preview."""
+    refs: List[Dict[str, Any]] = []
+    seen = set()
+    options = mapping.get("options", {})
+
+    def append_pairs(key: str, label: str, config: Dict[str, Any], selected_pairs: List[Dict[str, Any]]) -> None:
+        all_pairs = config_pairs(config)
+        for pair in selected_pairs:
+            if not pair.get("mark"):
+                continue
+            pair_index = next(
+                (index for index, candidate in enumerate(all_pairs) if candidate is pair or candidate == pair),
+                None,
+            )
+            if pair_index is None:
+                continue
+            identity = (key, pair_index)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            pair_label = label if len(selected_pairs) == 1 else f"{label}（第 {pair_index + 1} 个）"
+            refs.append({"key": key, "pairIndex": pair_index, "label": pair_label})
+
+    if record.result_options:
+        for result_name, selected_options in record.result_options.items():
+            for selected_option in selected_options:
+                key, config = result_option_config(options, result_name, selected_option)
+                if key is None or config is None:
+                    continue
+                append_pairs(
+                    key,
+                    f"{result_name}：{selected_option}",
+                    config,
+                    pairs_for_result_selection(key, result_name, config, selected_option),
+                )
+        return refs
+
+    for option in record.options:
+        config = options.get(option)
+        if not isinstance(config, dict):
+            continue
+        append_pairs(option, display_option_key(option), config, config_pairs(config))
+    return refs
+
+
 def split_options(value: Any, normalize: bool = True, dedupe: bool = True) -> List[str]:
     if value is None:
         return []
@@ -523,8 +592,11 @@ def set_mark_text(cell, text: str, style: Optional[Dict[str, Any]] = None) -> No
     except Exception:
         offset_x = 0
         offset_y = 0
-    if offset_x:
-        paragraph.paragraph_format.left_indent = Pt(offset_x * 0.35)
+    point_units = style.get("offsetUnits") == "pt"
+    offset_x_points = offset_x if point_units else offset_x * 0.35
+    offset_y_points = offset_y if point_units else offset_y * 0.25
+    if offset_x_points:
+        paragraph.paragraph_format.left_indent = Pt(offset_x_points)
     run = paragraph.add_run(text)
     set_east_asia_font(
         run,
@@ -538,13 +610,13 @@ def set_mark_text(cell, text: str, style: Optional[Dict[str, Any]] = None) -> No
     )
     # Character positioning moves the glyph without adding paragraph spacing,
     # so vertical nudging does not change the row height or document layout.
-    if offset_y:
+    if offset_y_points:
         run_properties = run._r.get_or_add_rPr()
         position = run_properties.find(qn("w:position"))
         if position is None:
             position = OxmlElement("w:position")
             run_properties.append(position)
-        position.set(qn("w:val"), str(int(round(-offset_y * 0.5))))
+        position.set(qn("w:val"), str(int(round(-offset_y_points * 2))))
     cell.vertical_alignment = cell_vertical_alignment(style.get("vertical", "middle"))
 
 
@@ -1748,7 +1820,16 @@ def blank_mapping() -> Dict[str, Any]:
         "version": 1,
         "templateName": "",
         "markText": CHECK_MARK,
-        "markStyle": {"horizontal": "center", "vertical": "middle", "fontSize": 10},
+        "markStyle": {
+            "horizontal": "center",
+            "vertical": "middle",
+            "fontName": "Arial",
+            "fontSize": 10,
+            "bold": False,
+            "offsetX": 0,
+            "offsetY": 0,
+            "offsetUnits": "pt",
+        },
         "fieldTargets": {},
         "fieldStyles": {
             field: default_field_style()
@@ -1905,12 +1986,12 @@ def collect_unwritten_votes(record: VoteRecord, mapping: Dict[str, Any]) -> List
 
     if record.result_options:
         for result_name, selected_options in record.result_options.items():
-            config = options.get(result_name)
             for selected_option in selected_options:
+                config_key, config = result_option_config(options, result_name, selected_option)
                 if not config:
                     missing.append((record, result_name, selected_option, "该结果未配置判断区和标记区"))
                     continue
-                matches = matching_pairs_for_selection(config, selected_option)
+                matches = pairs_for_result_selection(config_key or "", result_name, config, selected_option)
                 if not matches:
                     missing.append((record, result_name, selected_option, "没有匹配到判断区文本"))
                 elif not any(pair.get("mark") for pair in matches):
@@ -2105,13 +2186,13 @@ def apply_vote_marks(document, mapping: Dict[str, Any], record: VoteRecord) -> L
 
     if record.result_options:
         for result_name, selected_options in record.result_options.items():
-            config = options.get(result_name)
-            if not config:
-                warnings.append(f"第{record.row_no}行 {record.name}：{result_name} 没有配置标记区域")
-                continue
             for selected_option in selected_options:
                 display_option = f"{result_name}：{selected_option}"
-                pairs = matching_pairs_for_selection(config, selected_option)
+                config_key, config = result_option_config(options, result_name, selected_option)
+                if not config:
+                    warnings.append(f"第{record.row_no}行 {record.name}：{display_option} 没有配置标记区域")
+                    continue
+                pairs = pairs_for_result_selection(config_key or "", result_name, config, selected_option)
                 if not pairs:
                     warnings.append(f"第{record.row_no}行 {record.name}：{display_option} 没有匹配的判断区")
                     continue

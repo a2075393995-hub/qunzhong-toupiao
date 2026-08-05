@@ -7,7 +7,15 @@ from pathlib import Path
 from docx import Document
 from docx.oxml.ns import qn
 
-from vote_core import VoteRecord, apply_field_targets, blank_mapping, infer_field_targets, select_preview_record, split_room_value
+from vote_core import (
+    VoteRecord,
+    apply_field_targets,
+    blank_mapping,
+    infer_field_targets,
+    select_preview_record,
+    selected_mark_pair_refs,
+    split_room_value,
+)
 
 
 class FieldLayoutTests(unittest.TestCase):
@@ -76,6 +84,18 @@ class FieldLayoutTests(unittest.TestCase):
         selected, reasons = select_preview_record([invalid, valid], mapping)
         self.assertIs(selected, valid)
         self.assertEqual([], reasons)
+
+    def test_print_preview_lists_only_marks_visible_for_selected_record(self):
+        mapping = blank_mapping()
+        mapping["options"]["结果1"] = {
+            "pairs": [
+                {"judgmentText": "同意", "mark": {"table": 0, "row": 1, "col": 1}},
+                {"judgmentText": "反对", "mark": {"table": 0, "row": 1, "col": 2}},
+            ]
+        }
+        record = VoteRecord(2, "1-101", "张三", "13900000000", [], {}, {"结果1": ["反对"]})
+        refs = selected_mark_pair_refs(record, mapping)
+        self.assertEqual([{"key": "结果1", "pairIndex": 1, "label": "结果1：反对"}], refs)
 
 
 if __name__ == "__main__":

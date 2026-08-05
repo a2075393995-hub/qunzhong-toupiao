@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import os
+import queue
 import sys
 import threading
 import tkinter as tk
@@ -44,6 +45,7 @@ from vote_core import (
     record_parse_options,
     read_vote_records,
     select_preview_record,
+    selected_mark_pair_refs,
     split_room_value,
     target_label,
     validate_vote_record,
@@ -165,28 +167,56 @@ class VoteDocxApp(tk.Tk):
         self.preview_ready = False
         self.preview_path: Optional[Path] = None
         self.file_status_text = tk.StringVar(value="流程：上传模板 -> 上传数据文件 -> 设置模板 -> 导出前预览 -> 开始导出")
-        self.drag_adjust_start: Optional[Tuple[int, int, int, int]] = None
-        self.drag_adjust_moved = False
-        self.mouse_down_cell: Optional[Dict[str, Any]] = None
         self.preview_widget = None
         self.workflow_buttons: Dict[str, tk.Button] = {}
         self.workflow_done = set()
         self.debug_workspace_enabled = False
         self.debug_completed = False
         self.debug_controls: List[Any] = []
-        self.select_mark_for_adjust = False
-        self.selected_mark_ref: Optional[Tuple[str, int]] = None
         self.undo_stack: List[Dict[str, Any]] = []
         self.result_group_text = tk.StringVar(value="多结果标记：未选择")
         self.last_result_selection: List[str] = []
         self.template_page_count: Optional[int] = None
         self.current_template_profile_key: Optional[str] = None
+        self.preview_launch_in_progress = False
+        self.export_in_progress = False
+        self.ui_events: queue.Queue = queue.Queue()
+        self.ui_event_poll_id = None
         self.update_button: Optional[tk.Button] = None
 
         self._build_style()
         self._build_ui()
         self.set_debug_workspace_enabled(False)
         self.protocol("WM_DELETE_WINDOW", self.on_app_close)
+        self.ui_event_poll_id = self.after(50, self._poll_ui_events)
+
+    def post_to_ui(self, callback) -> None:
+        self.ui_events.put(callback)
+
+    def _poll_ui_events(self) -> None:
+        self.ui_event_poll_id = None
+        try:
+            while True:
+                callback = self.ui_events.get_nowait()
+                callback()
+        except queue.Empty:
+            pass
+        except Exception as exc:
+            self.report_callback_exception(type(exc), exc, exc.__traceback__)
+        try:
+            self.ui_event_poll_id = self.after(50, self._poll_ui_events)
+        except tk.TclError:
+            pass
+
+    def destroy(self):
+        poll_id = getattr(self, "ui_event_poll_id", None)
+        if poll_id is not None:
+            try:
+                self.after_cancel(poll_id)
+            except tk.TclError:
+                pass
+            self.ui_event_poll_id = None
+        super().destroy()
 
     def on_app_close(self):
         self.save_current_template_profile()
@@ -402,8 +432,6 @@ class VoteDocxApp(tk.Tk):
                 "pending_pair_index": copy.deepcopy(self.pending_pair_index),
                 "mark_offset_x": self.mark_offset_x,
                 "mark_offset_y": self.mark_offset_y,
-                "selected_mark_ref": copy.deepcopy(self.selected_mark_ref),
-                "select_mark_for_adjust": self.select_mark_for_adjust,
             }
         )
         if len(self.undo_stack) > 50:
@@ -416,8 +444,6 @@ class VoteDocxApp(tk.Tk):
             self.pending_pair_index = copy.deepcopy(state["pending_pair_index"])
             self.mark_offset_x = int(state.get("mark_offset_x") or 0)
             self.mark_offset_y = int(state.get("mark_offset_y") or 0)
-            self.selected_mark_ref = copy.deepcopy(state.get("selected_mark_ref"))
-            self.select_mark_for_adjust = bool(state.get("select_mark_for_adjust"))
             self.mark_debug_dirty()
             self.sync_validation_to_mapping(invalidate=False)
             self.refresh_mapping_tree()
@@ -472,8 +498,6 @@ class VoteDocxApp(tk.Tk):
         self.preview_path = None
         self.workflow_done.clear()
         self.debug_completed = False
-        self.select_mark_for_adjust = False
-        self.selected_mark_ref = None
         self.undo_stack.clear()
         self.selected_key = None
         self.last_result_selection = []
@@ -601,21 +625,6 @@ class VoteDocxApp(tk.Tk):
         left_scroll.bind_outer_mousewheel(self.option_list)
         self.reset_project_list([])
 
-        adjust_box = ttk.LabelFrame(left, text="打勾位置微调", padding=5)
-        adjust_box.pack(fill="x", pady=(6, 0))
-        pad = 2
-        select_mark_button = ttk.Button(adjust_box, text="选择打勾位置", command=self.start_select_mark_for_adjust)
-        up_button = ttk.Button(adjust_box, text="↑", width=4, command=lambda: self.nudge_mark(0, -1))
-        left_button = ttk.Button(adjust_box, text="←", width=4, command=lambda: self.nudge_mark(-1, 0))
-        right_button = ttk.Button(adjust_box, text="→", width=4, command=lambda: self.nudge_mark(1, 0))
-        down_button = ttk.Button(adjust_box, text="↓", width=4, command=lambda: self.nudge_mark(0, 1))
-        select_mark_button.grid(row=0, column=0, columnspan=3, sticky="ew", padx=pad, pady=(0, 6))
-        up_button.grid(row=1, column=1, padx=pad, pady=pad)
-        left_button.grid(row=2, column=0, padx=pad, pady=pad)
-        right_button.grid(row=2, column=2, padx=pad, pady=pad)
-        down_button.grid(row=3, column=1, padx=pad, pady=pad)
-        ttk.Label(adjust_box, text="先选一个蓝色打勾格，再用按钮/方向键/拖动微调，只影响该位置。", wraplength=255, foreground="#374151", font=("Microsoft YaHei UI", 9)).grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
-
         status_box = ttk.LabelFrame(left, text="当前标注", padding=5)
         status_box.pack(fill="both", expand=True, pady=(6, 0))
         self.mapping_tree = ttk.Treeview(status_box, columns=("name", "judgment", "mark"), show="headings", height=12)
@@ -651,11 +660,6 @@ class VoteDocxApp(tk.Tk):
             self.option_list,
             judgment_radio,
             mark_radio,
-            select_mark_button,
-            up_button,
-            left_button,
-            right_button,
-            down_button,
             self.mapping_tree,
             clear_selected_button,
             clear_button,
@@ -680,8 +684,6 @@ class VoteDocxApp(tk.Tk):
             self.mark_offset_x = 0
             self.mark_offset_y = 0
             self.apply_mapping_to_controls()
-            self.selected_mark_ref = None
-            self.select_mark_for_adjust = False
             self.template_page_count = docx_page_count(docx_path)
             self.debug_completed = False
             self.set_debug_workspace_enabled(False)
@@ -728,8 +730,6 @@ class VoteDocxApp(tk.Tk):
                 self.update_file_status()
                 return
             self.debug_completed = False
-            self.selected_mark_ref = None
-            self.select_mark_for_adjust = False
             self.set_debug_workspace_enabled(False)
             self.invalidate_preview()
             self.reset_workflow_after("debug", "debug_done", "preview", "export")
@@ -995,14 +995,8 @@ class VoteDocxApp(tk.Tk):
         )
         self.preview_widget = preview
         preview.grid(row=0, column=0, sticky="nw", padx=14, pady=14)
-        preview.bind("<ButtonPress-1>", self.on_preview_mouse_down)
-        preview.bind("<B1-Motion>", self.on_preview_mouse_drag)
-        preview.bind("<ButtonRelease-1>", self.on_preview_mouse_up)
+        preview.bind("<Button-1>", self.on_preview_image_clicked)
         self.table_frame.bind_mousewheel(preview)
-        preview.bind("<Left>", lambda _event: self.nudge_mark(-1, 0))
-        preview.bind("<Right>", lambda _event: self.nudge_mark(1, 0))
-        preview.bind("<Up>", lambda _event: self.nudge_mark(0, -1))
-        preview.bind("<Down>", lambda _event: self.nudge_mark(0, 1))
 
     def build_print_preview_image(self) -> Tuple[Image.Image, List[Dict[str, Any]]]:
         return self.build_print_preview_image_for_path(self.template_path.get(), highlight=True)
@@ -1055,7 +1049,7 @@ class VoteDocxApp(tk.Tk):
             else:
                 fill = "#ffffff"
                 outline = "#9ca3af"
-            selected_mark = "mark" in roles and self.selected_mark_target() == target
+            selected_mark = False
             if draw_line:
                 line_color = "#dc2626" if selected_mark else (outline if mapped else "#111827")
                 draw.line((x1, y2 - 4, x2, y2 - 4), fill=line_color, width=3 if mapped else 1)
@@ -1156,7 +1150,7 @@ class VoteDocxApp(tk.Tk):
                         else:
                             fill = "#ffffff"
                             outline = "#9ca3af"
-                        selected_mark = "mark" in roles and self.selected_mark_target() == target
+                        selected_mark = False
                         if mapped:
                             draw.rectangle((ux1, uy1, ux2, uy2), fill=fill, outline="#dc2626" if selected_mark else outline, width=3 if selected_mark else 2)
                         elif highlight:
@@ -1272,7 +1266,7 @@ class VoteDocxApp(tk.Tk):
                         else:
                             fill = "#ffffff"
                             outline = "#111827"
-                        selected_mark = "mark" in roles and self.selected_mark_target() == target
+                        selected_mark = False
                         draw.rectangle((x1, y1, x2, y2), fill=fill, outline="#dc2626" if selected_mark else outline, width=3 if selected_mark else (2 if mapped else 1))
                         if "judgment" in roles:
                             draw_role_badge(target, "judgment", x1 + 6, y1 + 4, "判 ")
@@ -1355,7 +1349,7 @@ class VoteDocxApp(tk.Tk):
                                     else:
                                         underline_fill = "#ffffff"
                                         underline_outline = "#9ca3af"
-                                    underline_selected = "mark" in underline_roles and self.selected_mark_target() == underline_target
+                                    underline_selected = False
                                     if underline_mapped:
                                         draw.rectangle(
                                             (ux1, uy1, ux2, uy2),
@@ -1530,68 +1524,12 @@ class VoteDocxApp(tk.Tk):
     def target_from_preview_cell(cell: Dict[str, Any]) -> Dict[str, Any]:
         return dict(cell.get("target") or {"table": cell["table"], "row": cell["row"], "col": cell["col"]})
 
-    def on_preview_mouse_down(self, event):
-        if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
-            return
-        if self.preview_widget is not None:
-            self.preview_widget.focus_set()
-        cell = self.find_preview_cell(event.x, event.y)
-        if not cell:
-            self.status_text.set("未点中可标注区域，请点击预览图里的表格或下划线单元格。")
-            return
-        self.mouse_down_cell = cell
-        self.drag_adjust_moved = False
-        target = self.target_from_preview_cell(cell)
-        roles = self.target_roles(target)
-        if self.select_mark_for_adjust:
-            if self.select_mark_at_target(target):
-                return
-            self.select_mark_for_adjust = False
-            return
-        if "mark" in roles and self.selected_mark_target() == target:
-            style = self.mark_style_for_target(target)
-            self.push_undo_state("拖动微调打勾位置")
-            self.drag_adjust_start = (event.x, event.y, int(style.get("offsetX") or 0), int(style.get("offsetY") or 0))
-            return
-        else:
-            self.drag_adjust_start = None
-        self.on_cell_clicked(target, cell["text"])
-
-    def on_preview_mouse_drag(self, event):
-        if not self.drag_adjust_start:
-            return
-        start_x, start_y, base_x, base_y = self.drag_adjust_start
-        self.drag_adjust_moved = True
-        self.mark_offset_x = base_x + event.x - start_x
-        self.mark_offset_y = base_y + event.y - start_y
-        self.on_mark_style_changed()
-        self.status_text.set("正在单独拖动微调当前打勾位置；松开鼠标后刷新预览。")
-
-    def on_preview_mouse_up(self, _event):
-        if self.drag_adjust_start:
-            cell = self.mouse_down_cell
-            moved = self.drag_adjust_moved
-            self.drag_adjust_start = None
-            self.drag_adjust_moved = False
-            self.mouse_down_cell = None
-            if moved:
-                self.render_table_preview()
-                self.status_text.set("已微调当前打勾位置。")
-            elif cell:
-                self.select_mark_at_target(self.target_from_preview_cell(cell))
-        else:
-            self.mouse_down_cell = None
-
     def on_preview_image_clicked(self, event):
         if not self.debug_workspace_enabled:
             self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
             return
         cell = self.find_preview_cell(event.x, event.y)
         if cell:
-            if self.select_mark_for_adjust:
-                self.select_mark_at_target(self.target_from_preview_cell(cell))
-                return
             self.on_cell_clicked(self.target_from_preview_cell(cell), cell["text"])
             return
         self.status_text.set("未点中可标注区域，请点击预览图里的表格或下划线单元格。")
@@ -1660,56 +1598,12 @@ class VoteDocxApp(tk.Tk):
                     refs.append((key, index, pair, config))
         return refs
 
-    def mark_pair_for_ref(self, ref: Optional[Tuple[str, int]]) -> Optional[Tuple[str, int, Dict[str, Any], Dict[str, Any]]]:
-        if not ref:
-            return None
-        key, pair_index = ref
-        config = self.mapping.get("options", {}).get(key)
-        if not config:
-            return None
-        pairs = config_pairs(config)
-        if pair_index < 0 or pair_index >= len(pairs):
-            return None
-        return key, pair_index, pairs[pair_index], config
-
-    def selected_mark_target(self) -> Optional[Dict[str, int]]:
-        ref = self.mark_pair_for_ref(self.selected_mark_ref)
-        if not ref:
-            return None
-        return ref[2].get("mark")
-
     def mark_style_for_target(self, target: Dict[str, int]) -> Dict[str, Any]:
-        selected = self.mark_pair_for_ref(self.selected_mark_ref)
-        if selected and selected[2].get("mark") == target:
-            _key, _index, pair, config = selected
-            return dict(pair.get("markStyle") or config.get("markStyle") or self.mapping.get("markStyle") or {})
         refs = self.mark_pair_refs_for_target(target)
         if refs:
             _key, _index, pair, config = refs[0]
             return dict(pair.get("markStyle") or config.get("markStyle") or self.mapping.get("markStyle") or {})
         return dict(self.mapping.get("markStyle") or {})
-
-    def start_select_mark_for_adjust(self):
-        if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
-            return
-        self.select_mark_for_adjust = True
-        self.status_text.set("请选择一个蓝色打勾位置；选中后再用方向键或按钮微调。")
-
-    def select_mark_at_target(self, target: Dict[str, int]) -> bool:
-        refs = self.mark_pair_refs_for_target(target)
-        if not refs:
-            messagebox.showinfo("未选中打勾位置", "请点击已经标成蓝色的打勾区域。")
-            return False
-        selected_keys = [key for key in self.selected_option_keys() if not key.startswith("field:")]
-        ref = next((item for item in refs if item[0] in selected_keys), refs[0])
-        key, pair_index, pair, config = ref
-        self.selected_mark_ref = (key, pair_index)
-        self.select_mark_for_adjust = False
-        self.set_mark_style_controls(pair.get("markStyle") or config.get("markStyle") or self.mapping.get("markStyle"))
-        self.status_text.set(f"已选择 {self.option_labels.get(key, key)} 第 {pair_index + 1} 个打勾位置；现在可单独微调。")
-        self.render_table_preview()
-        return True
 
     def is_cell_mapped(self, table, row, col) -> bool:
         return bool(self.cell_roles(table, row, col))
@@ -1729,8 +1623,6 @@ class VoteDocxApp(tk.Tk):
         self.selected_key = self.option_keys[selection[0]]
         selected_keys = self.selected_option_keys()
         result_keys = [key for key in selected_keys if not key.startswith("field:")]
-        if self.selected_mark_ref and self.selected_mark_ref[0] not in selected_keys:
-            self.selected_mark_ref = None
         self.load_selected_mark_style()
         self.load_selected_choice_mode()
         current_mode = self.brush_mode.get()
@@ -1755,8 +1647,6 @@ class VoteDocxApp(tk.Tk):
         if index >= len(self.field_keys):
             return
         self.selected_key = self.field_keys[index]
-        self.selected_mark_ref = None
-        self.select_mark_for_adjust = False
         self.load_selected_mark_style()
         self.set_brush(self.brush_mode.get() if self.brush_mode.get() in {"judgment", "mark"} else "judgment")
 
@@ -1915,7 +1805,16 @@ class VoteDocxApp(tk.Tk):
             font_size = int(self.mark_font_size.get() or 10)
         except Exception:
             font_size = 10
-        return {"horizontal": horizontal, "vertical": vertical, "fontSize": font_size, "offsetX": self.mark_offset_x, "offsetY": self.mark_offset_y}
+        return {
+            "horizontal": horizontal,
+            "vertical": vertical,
+            "fontName": "Arial",
+            "fontSize": font_size,
+            "bold": False,
+            "offsetX": self.mark_offset_x,
+            "offsetY": self.mark_offset_y,
+            "offsetUnits": "pt",
+        }
 
     def set_mark_style_controls(self, style: Optional[Dict[str, Any]]):
         style = style or {}
@@ -1956,57 +1855,6 @@ class VoteDocxApp(tk.Tk):
             self.mapping.setdefault("resultModes", {})[result_name] = self.choice_mode.get()
         self.mark_debug_dirty()
         self.refresh_mapping_tree()
-
-    def apply_mark_style_to_selected(self):
-        if not self.selected_key or self.selected_key.startswith("field:"):
-            messagebox.showinfo("请选择选项", "请先选择一个投票选项。")
-            return
-        self.push_undo_state("调整打勾样式")
-        config = self.mapping.setdefault("options", {}).setdefault(self.selected_key, {"label": self.selected_key})
-        config["markStyle"] = self.current_mark_style()
-        self.mark_debug_dirty()
-        self.log(f"{self.selected_key} 打勾位置已调整。")
-
-    def apply_mark_style_to_all(self):
-        if not self.debug_workspace_enabled:
-            return
-        self.push_undo_state("同步打勾样式")
-        style = self.current_mark_style()
-        self.mapping["markStyle"] = style
-        for config in self.mapping.get("options", {}).values():
-            config["markStyle"] = dict(style)
-            for pair in config.get("pairs", []) or []:
-                if pair.get("mark"):
-                    pair["markStyle"] = dict(style)
-        self.mark_debug_dirty()
-        self.log("已将打勾位置应用到全部选项。")
-
-    def on_mark_style_changed(self):
-        if not self.debug_workspace_enabled:
-            return
-        style = self.current_mark_style()
-        selected = self.mark_pair_for_ref(self.selected_mark_ref)
-        if selected:
-            _key, _pair_index, pair, _config = selected
-            pair["markStyle"] = dict(style)
-            self.mark_debug_dirty()
-            return
-        self.mapping["markStyle"] = dict(style)
-        self.mark_debug_dirty()
-
-    def nudge_mark(self, dx: int, dy: int):
-        if not self.debug_workspace_enabled:
-            self.status_text.set("请先点击顶部“设置模板”启用模板设置区。")
-            return
-        if not self.mark_pair_for_ref(self.selected_mark_ref):
-            self.status_text.set("请先点击“选择打勾位置”，再选择一个蓝色打勾格。")
-            return
-        self.push_undo_state("微调打勾位置")
-        self.mark_offset_x += dx
-        self.mark_offset_y += dy
-        self.on_mark_style_changed()
-        self.render_table_preview()
-        self.status_text.set("已微调当前打勾位置。")
 
     def on_cell_clicked(self, target: Dict[str, Any], text: str):
         if not self.debug_workspace_enabled:
@@ -2060,7 +1908,6 @@ class VoteDocxApp(tk.Tk):
                         pair["groupLabel"] = group_label
                     pairs.append(pair)
                     self.pending_pair_index[key] = len(pairs) - 1
-                    self.selected_mark_ref = None
                 else:
                     pair_index = mark_pair_indexes.get(key)
                     if pair_index is None:
@@ -2075,8 +1922,6 @@ class VoteDocxApp(tk.Tk):
                         if group_label:
                             pairs[pair_index]["groupLabel"] = group_label
                     self.pending_pair_index.pop(key, None)
-                    if len(selected_keys) == 1:
-                        self.selected_mark_ref = (key, pair_index)
             self.mark_debug_dirty()
             target_name = "判断区" if mode == "judgment" else "标记区"
             self.log(f"{len(selected_keys)} 个结果 {target_name} = {target_label(target)}")
@@ -2111,8 +1956,6 @@ class VoteDocxApp(tk.Tk):
             else:
                 self.mapping.get("options", {}).pop(key, None)
                 self.pending_pair_index.pop(key, None)
-                if self.selected_mark_ref and self.selected_mark_ref[0] == key:
-                    self.selected_mark_ref = None
         self.mark_debug_dirty()
         self.refresh_mapping_tree()
         self.render_table_preview()
@@ -2124,8 +1967,6 @@ class VoteDocxApp(tk.Tk):
         self.push_undo_state("清空所有标注")
         self.mapping = blank_mapping()
         self.pending_pair_index = {}
-        self.selected_mark_ref = None
-        self.select_mark_for_adjust = False
         self.mark_offset_x = 0
         self.mark_offset_y = 0
         self.mark_debug_dirty()
@@ -2200,12 +2041,105 @@ class VoteDocxApp(tk.Tk):
             return 0
 
     def show_internal_preview(self, preview_path: Path, warnings: List[str]) -> None:
-        try:
-            initial_pdf = docx_to_pdf(preview_path)
-            initial_images, initial_page_info = render_pdf_pages(initial_pdf, zoom=1.25)
-        except Exception as exc:
-            messagebox.showerror("真实打印预览失败", str(exc))
+        if self.preview_launch_in_progress:
+            messagebox.showinfo("正在生成预览", "真实打印预览正在生成，请稍候。")
             return
+
+        self.preview_launch_in_progress = True
+        loading = tk.Toplevel(self)
+        loading.title("正在生成真实打印预览")
+        loading.geometry("430x160")
+        loading.resizable(False, False)
+        loading.transient(self)
+        loading.grab_set()
+        loading_state = {"cancelled": False}
+        result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+        loading_body = ttk.Frame(loading, padding=20)
+        loading_body.pack(fill="both", expand=True)
+        ttk.Label(loading_body, text="正在由 Word 生成真实打印预览", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(
+            loading_body,
+            text="程序仍在工作。完成后会自动显示与打印版一致的 PDF 页面。",
+            foreground="#4b5563",
+        ).pack(anchor="w", pady=(8, 14))
+        progress = ttk.Progressbar(loading_body, mode="indeterminate")
+        progress.pack(fill="x")
+        progress.start(12)
+
+        def remove_preview_file(path: Path) -> None:
+            try:
+                candidate = Path(path)
+                if candidate.parent.name == "预览":
+                    candidate.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        def cancel_loading() -> None:
+            loading_state["cancelled"] = True
+            if loading.winfo_exists():
+                loading.destroy()
+            self.preview_ready = False
+            self.preview_path = None
+            self.status_text.set("正在停止真实打印预览；后台 Word 任务结束后可重新预览。")
+
+        def finish_loading(
+            initial_pdf: Optional[Path],
+            initial_images: Optional[List[Image.Image]],
+            initial_page_info: Optional[List[Dict[str, Any]]],
+            error: Optional[Exception],
+        ) -> None:
+            self.preview_launch_in_progress = False
+            if loading.winfo_exists():
+                loading.destroy()
+            if loading_state["cancelled"]:
+                if initial_pdf is not None:
+                    initial_pdf.unlink(missing_ok=True)
+                remove_preview_file(preview_path)
+                return
+            if error is not None or initial_pdf is None or initial_images is None or initial_page_info is None:
+                self.preview_ready = False
+                self.preview_path = None
+                remove_preview_file(preview_path)
+                messagebox.showerror("真实打印预览失败", str(error or "无法读取 PDF 页面"))
+                return
+            self._show_rendered_preview(preview_path, warnings, initial_pdf, initial_images, initial_page_info)
+
+        def worker() -> None:
+            initial_pdf: Optional[Path] = None
+            initial_images: Optional[List[Image.Image]] = None
+            initial_page_info: Optional[List[Dict[str, Any]]] = None
+            error: Optional[Exception] = None
+            try:
+                initial_pdf = docx_to_pdf(preview_path)
+                initial_images, initial_page_info = render_pdf_pages(initial_pdf, zoom=1.25)
+            except Exception as exc:
+                error = exc
+            result_queue.put((initial_pdf, initial_images, initial_page_info, error))
+
+        def poll_loading_result() -> None:
+            try:
+                result = result_queue.get_nowait()
+            except queue.Empty:
+                try:
+                    self.after(50, poll_loading_result)
+                except tk.TclError:
+                    pass
+                return
+            finish_loading(*result)
+
+        loading.protocol("WM_DELETE_WINDOW", cancel_loading)
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(50, poll_loading_result)
+
+    def _show_rendered_preview(
+        self,
+        preview_path: Path,
+        warnings: List[str],
+        initial_pdf: Path,
+        initial_images: List[Image.Image],
+        initial_page_info: List[Dict[str, Any]],
+    ) -> None:
 
         dialog = tk.Toplevel(self)
         dialog.title("真实打印预览与用户信息调整")
@@ -2220,10 +2154,37 @@ class VoteDocxApp(tk.Tk):
         rendered_images = initial_images
         page_info = initial_page_info
         render_zoom = 1.25
+        preview_record, _preview_reasons = select_preview_record(self.records, self.mapping)
+        active_mark_refs = selected_mark_pair_refs(preview_record, self.mapping) if preview_record is not None else []
+
+        def target_order(ref: Dict[str, Any]) -> Tuple[int, int, int, int, int, int]:
+            config = self.mapping.get("options", {}).get(ref.get("key"), {})
+            pairs = config_pairs(config)
+            pair_index = int(ref.get("pairIndex") or 0)
+            target = pairs[pair_index].get("mark", {}) if pair_index < len(pairs) else {}
+            return (
+                int(target.get("page", 0)),
+                int(target.get("table", 100000)),
+                int(target.get("row", target.get("paragraph", 100000))),
+                int(target.get("col", 0)),
+                int(target.get("paragraph", 0)),
+                int(target.get("underline", target.get("run", 0))),
+            )
+
+        active_mark_refs.sort(key=target_order)
         page_origins: List[Tuple[int, int]] = []
         overlay_items: List[Dict[str, Any]] = []
         drag_state: Dict[str, Any] = {}
         pdf_field_styles = copy.deepcopy(self.mapping.get("fieldStyles", {}) or {})
+        pdf_mark_styles: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        for mark_ref in active_mark_refs:
+            config = self.mapping.get("options", {}).get(mark_ref["key"], {})
+            pairs = config_pairs(config)
+            pair_index = int(mark_ref["pairIndex"])
+            if pair_index < len(pairs):
+                pdf_mark_styles[(mark_ref["key"], pair_index)] = copy.deepcopy(
+                    pairs[pair_index].get("markStyle") or config.get("markStyle") or self.mapping.get("markStyle") or {}
+                )
         match_cache: Dict[Tuple[str, str], List[Dict[str, float]]] = {}
         refresh_state: Dict[str, Any] = {
             "afterId": None,
@@ -2232,6 +2193,7 @@ class VoteDocxApp(tk.Tk):
             "closed": False,
             "changeGroupOpen": False,
         }
+        refresh_results: queue.Queue = queue.Queue()
         controls_loading = False
         confirm_button: Optional[ttk.Button] = None
 
@@ -2245,7 +2207,6 @@ class VoteDocxApp(tk.Tk):
             except Exception:
                 pass
 
-        selected_field = tk.StringVar(value="room")
         font_name = tk.StringVar(value="宋体")
         font_size = tk.StringVar(value="10")
         font_bold = tk.BooleanVar(value=False)
@@ -2254,7 +2215,6 @@ class VoteDocxApp(tk.Tk):
         zoom_percent = tk.StringVar(value="100")
         paper_text = tk.StringVar(value=page_info[0]["label"] if page_info else "未识别纸张")
         preview_status = tk.StringVar(value="由 Word 直接导出 PDF，纸张、分页和打印版一致。")
-        preview_record, _preview_reasons = select_preview_record(self.records, self.mapping)
 
         header = ttk.Frame(dialog, padding=(12, 10))
         header.pack(side="top", fill="x")
@@ -2271,19 +2231,32 @@ class VoteDocxApp(tk.Tk):
         body.add(canvas_box, weight=1)
 
         field_choices = [
-            ("building", "楼栋（1-101 中的 1）"),
-            ("roomNo", "房号（1-101 中的 101）"),
-            ("room", "完整地址/原始值"),
-            ("name", "姓名"),
-            ("phone", "电话号码"),
+            ("building", "文字 · 楼栋（1-101 中的 1）"),
+            ("roomNo", "文字 · 房号（1-101 中的 101）"),
+            ("room", "文字 · 完整地址/原始值"),
+            ("name", "文字 · 姓名"),
+            ("phone", "文字 · 电话号码"),
         ]
-        field_box = ttk.LabelFrame(controls, text="用户信息字段", padding=8)
-        field_box.pack(fill="x")
-        field_list = tk.Listbox(field_box, height=5, exportselection=False, font=("Microsoft YaHei UI", 9))
-        field_list.pack(fill="x")
-        for _field, label in field_choices:
-            field_list.insert("end", label)
-        field_list.selection_set(2)
+        adjustment_choices: List[Dict[str, Any]] = [
+            {"kind": "field", "field": field, "label": label}
+            for field, label in field_choices
+        ]
+        adjustment_choices.extend(
+            {"kind": "mark", **mark_ref, "label": f"打勾 · {mark_ref['label']}"}
+            for mark_ref in active_mark_refs
+        )
+        adjustment_box = ttk.LabelFrame(controls, text="调整对象", padding=8)
+        adjustment_box.pack(fill="x")
+        adjustment_list = tk.Listbox(
+            adjustment_box,
+            height=min(10, max(5, len(adjustment_choices))),
+            exportselection=False,
+            font=("Microsoft YaHei UI", 9),
+        )
+        adjustment_list.pack(fill="x")
+        for adjustment in adjustment_choices:
+            adjustment_list.insert("end", adjustment["label"])
+        adjustment_list.selection_set(2 if len(adjustment_choices) > 2 else 0)
 
         style_box = ttk.LabelFrame(controls, text="字体与位置", padding=8)
         style_box.pack(fill="x", pady=(8, 0))
@@ -2314,7 +2287,7 @@ class VoteDocxApp(tk.Tk):
         apply_button.pack(fill="x", pady=(8, 0))
         ttk.Label(
             controls,
-            text="可直接拖动红框内的文字；点击预览后也可用方向键移动。普通方向键 1pt，Shift 5pt，Ctrl 0.1pt。停手后自动生成精确打印预览。",
+            text="选择文字或打勾位置后，可直接拖动红框，也可用方向键移动。普通方向键 1pt，Shift 5pt，Ctrl 0.1pt。停手后自动重新生成真实打印预览。",
             wraplength=245,
             foreground="#4b5563",
         ).pack(anchor="w", pady=(8, 0))
@@ -2348,7 +2321,41 @@ class VoteDocxApp(tk.Tk):
                 return ""
             return str(getattr(record, field, "") or "")
 
-        def style_for_field(field: str) -> Dict[str, Any]:
+        def selected_adjustment() -> Dict[str, Any]:
+            selection = adjustment_list.curselection()
+            index = int(selection[0]) if selection else 0
+            return adjustment_choices[max(0, min(index, len(adjustment_choices) - 1))]
+
+        def mark_pair_for_adjustment(adjustment: Dict[str, Any], mapping: Optional[Dict[str, Any]] = None):
+            source = mapping or self.mapping
+            config = source.get("options", {}).get(adjustment.get("key"), {})
+            pairs = config_pairs(config)
+            pair_index = int(adjustment.get("pairIndex") or 0)
+            if pair_index < 0 or pair_index >= len(pairs):
+                return None, config
+            return pairs[pair_index], config
+
+        def normalized_mark_preview_style(style: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            raw = dict(style or {})
+            result = {
+                "fontName": str(raw.get("fontName") or "Arial"),
+                "fontSize": float(raw.get("fontSize") or 10),
+                "bold": bool(raw.get("bold", False)),
+                "offsetX": float(raw.get("offsetX") or 0),
+                "offsetY": float(raw.get("offsetY") or 0),
+                "offsetUnits": "pt",
+            }
+            if raw.get("offsetUnits") != "pt":
+                result["offsetX"] *= 0.35
+                result["offsetY"] *= 0.25
+            return result
+
+        def style_for_adjustment(adjustment: Dict[str, Any]) -> Dict[str, Any]:
+            if adjustment.get("kind") == "mark":
+                pair, config = mark_pair_for_adjustment(adjustment)
+                style = (pair or {}).get("markStyle") or config.get("markStyle") or self.mapping.get("markStyle") or {}
+                return normalized_mark_preview_style(style)
+            field = str(adjustment.get("field") or "room")
             style = {"fontName": "宋体", "fontSize": 10, "bold": False, "offsetX": 0, "offsetY": 0}
             style.update(self.mapping.get("fieldStyles", {}).get(field, {}) or {})
             return style
@@ -2366,12 +2373,14 @@ class VoteDocxApp(tk.Tk):
                 current_offset_y = float(offset_y.get() or 0)
             except Exception:
                 current_offset_y = 0.0
+            adjustment = selected_adjustment()
             return {
-                "fontName": font_name.get().strip() or "宋体",
+                "fontName": font_name.get().strip() or ("Arial" if adjustment.get("kind") == "mark" else "宋体"),
                 "fontSize": max(5.0, min(72.0, size)),
                 "bold": bool(font_bold.get()),
                 "offsetX": current_offset_x,
                 "offsetY": current_offset_y,
+                **({"offsetUnits": "pt"} if adjustment.get("kind") == "mark" else {}),
             }
 
         def field_pdf_matches(field: str, value: str) -> List[Dict[str, float]]:
@@ -2409,7 +2418,37 @@ class VoteDocxApp(tk.Tk):
             match_cache[cache_key] = selected_matches
             return selected_matches
 
-        def pdf_style_for_field(field: str) -> Dict[str, Any]:
+        def adjustment_value(adjustment: Dict[str, Any]) -> str:
+            if adjustment.get("kind") == "mark":
+                return str(self.mapping.get("markText") or "√")
+            return preview_value(str(adjustment.get("field") or "room"))
+
+        def adjustment_pdf_matches(adjustment: Dict[str, Any], value: str) -> List[Dict[str, float]]:
+            if adjustment.get("kind") != "mark":
+                return field_pdf_matches(str(adjustment.get("field") or "room"), value)
+            cache_key = ("__visible_marks__", value)
+            if cache_key not in match_cache:
+                match_cache[cache_key] = sorted(
+                    search_pdf_text(current_pdf, value),
+                    key=lambda match: (int(match["page"]), float(match["y0"]), float(match["x0"])),
+                )
+            identity = (adjustment.get("key"), int(adjustment.get("pairIndex") or 0))
+            mark_index = next(
+                (
+                    index
+                    for index, ref in enumerate(active_mark_refs)
+                    if (ref.get("key"), int(ref.get("pairIndex") or 0)) == identity
+                ),
+                -1,
+            )
+            matches = match_cache[cache_key]
+            return [matches[mark_index]] if 0 <= mark_index < len(matches) else []
+
+        def pdf_style_for_adjustment(adjustment: Dict[str, Any]) -> Dict[str, Any]:
+            if adjustment.get("kind") == "mark":
+                identity = (str(adjustment.get("key") or ""), int(adjustment.get("pairIndex") or 0))
+                return normalized_mark_preview_style(pdf_mark_styles.get(identity))
+            field = str(adjustment.get("field") or "room")
             style = {"fontName": "宋体", "fontSize": 10, "bold": False, "offsetX": 0, "offsetY": 0}
             style.update(pdf_field_styles.get(field, {}) or {})
             return style
@@ -2447,21 +2486,21 @@ class VoteDocxApp(tk.Tk):
             except Exception:
                 return "#ffffff"
 
-        def paint_selected_field(force_live: bool = False):
+        def paint_selected_adjustment(force_live: bool = False):
             nonlocal overlay_items
-            canvas.delete("field_overlay")
+            canvas.delete("adjustment_overlay")
             overlay_items = []
-            field = selected_field.get()
-            value = preview_value(field)
+            adjustment = selected_adjustment()
+            value = adjustment_value(adjustment)
             if not value or not current_pdf.exists():
                 return
             try:
                 displayed_style = current_style()
-                exact_style = pdf_style_for_field(field)
+                exact_style = pdf_style_for_adjustment(adjustment)
                 show_live_value = force_live or not styles_match(displayed_style, exact_style)
                 delta_x = float(displayed_style.get("offsetX") or 0) - float(exact_style.get("offsetX") or 0)
                 delta_y = float(displayed_style.get("offsetY") or 0) - float(exact_style.get("offsetY") or 0)
-                for match in field_pdf_matches(field, value):
+                for match in adjustment_pdf_matches(adjustment, value):
                     page_index = int(match["page"])
                     if page_index >= len(page_origins):
                         continue
@@ -2479,7 +2518,7 @@ class VoteDocxApp(tk.Tk):
                             exact_y2 + 3,
                             fill=background,
                             outline=background,
-                            tags=("field_overlay",),
+                            tags=("adjustment_overlay",),
                         )
                         live_x = exact_x1 + delta_x * render_zoom
                         live_y = exact_y1 + delta_y * render_zoom
@@ -2491,8 +2530,8 @@ class VoteDocxApp(tk.Tk):
                             anchor="nw",
                             text=value,
                             fill="#111827",
-                            font=(str(displayed_style.get("fontName") or "宋体"), -font_pixels, font_weight),
-                            tags=("field_overlay",),
+                            font=(str(displayed_style.get("fontName") or ("Arial" if adjustment.get("kind") == "mark" else "宋体")), -font_pixels, font_weight),
+                            tags=("adjustment_overlay",),
                         )
                         text_box = canvas.bbox(text_id)
                         if text_box:
@@ -2511,7 +2550,7 @@ class VoteDocxApp(tk.Tk):
                         y2 + 3,
                         outline="#dc2626",
                         width=2,
-                        tags=("field_overlay",),
+                        tags=("adjustment_overlay",),
                     )
                     hit_padding = 9
                     overlay_items.append(
@@ -2544,7 +2583,7 @@ class VoteDocxApp(tk.Tk):
                 y += image.height + 34
                 max_width = max(max_width, image.width)
             dialog.preview_image_tk = photos
-            paint_selected_field()
+            paint_selected_adjustment()
             canvas.configure(scrollregion=(0, 0, max_width + 48, max(200, y)))
 
         def selected_zoom() -> Tuple[int, float]:
@@ -2567,11 +2606,20 @@ class VoteDocxApp(tk.Tk):
 
         def begin_change_group():
             if not refresh_state["changeGroupOpen"]:
-                self.push_undo_state("调整用户信息字体/位置")
+                label = "调整打勾位置" if selected_adjustment().get("kind") == "mark" else "调整用户信息字体/位置"
+                self.push_undo_state(label)
                 refresh_state["changeGroupOpen"] = True
 
         def store_current_style():
-            self.mapping.setdefault("fieldStyles", {})[selected_field.get()] = current_style()
+            adjustment = selected_adjustment()
+            if adjustment.get("kind") == "mark":
+                pair, config = mark_pair_for_adjustment(adjustment)
+                if isinstance(config.get("pairs"), list) and pair is not None:
+                    pair["markStyle"] = current_style()
+                elif isinstance(config, dict):
+                    config["markStyle"] = current_style()
+                return
+            self.mapping.setdefault("fieldStyles", {})[str(adjustment.get("field") or "room")] = current_style()
 
         def finish_exact_refresh(
             token: int,
@@ -2584,7 +2632,7 @@ class VoteDocxApp(tk.Tk):
             refreshed_warnings: List[str],
             error: Optional[Exception],
         ):
-            nonlocal current_docx, current_pdf, rendered_images, page_info, render_zoom, pdf_field_styles
+            nonlocal current_docx, current_pdf, rendered_images, page_info, render_zoom, pdf_field_styles, pdf_mark_styles
             refresh_state["running"] = False
             if refresh_state["closed"] or not dialog.winfo_exists():
                 remove_intermediate_docx(generated_docx)
@@ -2595,7 +2643,7 @@ class VoteDocxApp(tk.Tk):
                 remove_intermediate_docx(generated_docx)
                 if generated_pdf is not None and generated_pdf.name.startswith(".live-preview-"):
                     generated_pdf.unlink(missing_ok=True)
-                dialog.after(0, start_exact_refresh)
+                start_exact_refresh()
                 return
             if error is not None or generated_docx is None or generated_pdf is None or generated_images is None or generated_page_info is None:
                 remove_intermediate_docx(generated_docx)
@@ -2612,6 +2660,15 @@ class VoteDocxApp(tk.Tk):
             page_info = generated_page_info
             render_zoom = generated_zoom
             pdf_field_styles = copy.deepcopy(mapping_snapshot.get("fieldStyles", {}) or {})
+            pdf_mark_styles = {}
+            for mark_ref in active_mark_refs:
+                config = mapping_snapshot.get("options", {}).get(mark_ref["key"], {})
+                pairs = config_pairs(config)
+                pair_index = int(mark_ref["pairIndex"])
+                if pair_index < len(pairs):
+                    pdf_mark_styles[(mark_ref["key"], pair_index)] = copy.deepcopy(
+                        pairs[pair_index].get("markStyle") or config.get("markStyle") or mapping_snapshot.get("markStyle") or {}
+                    )
             match_cache.clear()
             if previous_pdf != current_pdf and previous_pdf.name.startswith(".live-preview-"):
                 previous_pdf.unlink(missing_ok=True)
@@ -2664,9 +2721,8 @@ class VoteDocxApp(tk.Tk):
                     generated_images, generated_page_info = render_pdf_pages(generated_pdf, zoom=worker_zoom)
                 except Exception as exc:
                     error = exc
-                self.after(
-                    0,
-                    lambda: finish_exact_refresh(
+                refresh_results.put(
+                    (
                         token,
                         mapping_snapshot,
                         generated_docx,
@@ -2676,10 +2732,25 @@ class VoteDocxApp(tk.Tk):
                         worker_zoom,
                         refreshed_warnings,
                         error,
-                    ),
+                    )
                 )
 
             threading.Thread(target=worker, daemon=True).start()
+            self.after(50, poll_exact_refresh_result)
+
+        def poll_exact_refresh_result():
+            try:
+                result = refresh_results.get_nowait()
+            except queue.Empty:
+                if refresh_state["running"]:
+                    try:
+                        self.after(50, poll_exact_refresh_result)
+                    except tk.TclError:
+                        pass
+                return
+            finish_exact_refresh(*result)
+            if refresh_state["running"]:
+                self.after(50, poll_exact_refresh_result)
 
         def queue_exact_refresh(delay_ms: int = 450, push_undo: bool = True):
             if refresh_state["closed"] or controls_loading:
@@ -2689,7 +2760,7 @@ class VoteDocxApp(tk.Tk):
             store_current_style()
             refresh_state["requested"] += 1
             set_confirm_enabled(False)
-            paint_selected_field(force_live=True)
+            paint_selected_adjustment(force_live=True)
             preview_status.set("位置已实时显示；停手后将自动校准为精确打印效果。")
             after_id = refresh_state.get("afterId")
             if after_id is not None:
@@ -2699,22 +2770,20 @@ class VoteDocxApp(tk.Tk):
                     pass
             refresh_state["afterId"] = dialog.after(max(0, delay_ms), start_exact_refresh)
 
-        def load_field_controls(*_args):
+        def load_adjustment_controls(*_args):
             nonlocal controls_loading
             controls_loading = True
             try:
-                selection = field_list.curselection()
-                if selection:
-                    selected_field.set(field_choices[int(selection[0])][0])
-                style = style_for_field(selected_field.get())
-                font_name.set(str(style.get("fontName") or "宋体"))
+                adjustment = selected_adjustment()
+                style = style_for_adjustment(adjustment)
+                font_name.set(str(style.get("fontName") or ("Arial" if adjustment.get("kind") == "mark" else "宋体")))
                 font_size.set(str(style.get("fontSize") or 10))
                 font_bold.set(bool(style.get("bold", False)))
                 offset_x.set(float(style.get("offsetX") or 0))
                 offset_y.set(float(style.get("offsetY") or 0))
             finally:
                 controls_loading = False
-            paint_selected_field()
+            paint_selected_adjustment()
 
         def on_style_control_changed(*_args):
             queue_exact_refresh()
@@ -2737,7 +2806,7 @@ class VoteDocxApp(tk.Tk):
         ttk.Button(nudge_box, text="→", width=4, command=lambda: nudge(1, 0)).grid(row=1, column=2, padx=2, pady=2)
         ttk.Button(nudge_box, text="↓", width=4, command=lambda: nudge(0, 1)).grid(row=2, column=1, padx=2, pady=2)
         apply_button.configure(command=lambda: queue_exact_refresh(delay_ms=0))
-        field_list.bind("<<ListboxSelect>>", load_field_controls)
+        adjustment_list.bind("<<ListboxSelect>>", load_adjustment_controls)
         font_combo.bind("<<ComboboxSelected>>", on_style_control_changed)
         font_combo.bind("<KeyRelease>", on_style_control_changed)
         bold_check.configure(command=on_style_control_changed)
@@ -2780,7 +2849,8 @@ class VoteDocxApp(tk.Tk):
                     }
                 )
                 canvas.configure(cursor="fleur")
-                preview_status.set("已选中当前文字：拖动鼠标，或使用方向键微调位置。")
+                object_name = "打勾" if selected_adjustment().get("kind") == "mark" else "文字"
+                preview_status.set(f"已选中当前{object_name}：拖动鼠标，或使用方向键微调位置。")
 
         def on_canvas_motion(event):
             if drag_state:
@@ -2801,8 +2871,9 @@ class VoteDocxApp(tk.Tk):
             offset_x.set(round(drag_state["baseX"] + dx / render_zoom, 1))
             offset_y.set(round(drag_state["baseY"] + dy / render_zoom, 1))
             store_current_style()
-            paint_selected_field(force_live=True)
-            preview_status.set("正在实时移动字段；松开鼠标后自动生成精确打印预览。")
+            paint_selected_adjustment(force_live=True)
+            object_name = "打勾" if selected_adjustment().get("kind") == "mark" else "文字"
+            preview_status.set(f"正在实时移动{object_name}；松开鼠标后自动生成精确打印预览。")
 
         def on_canvas_release(_event):
             if drag_state:
@@ -2895,7 +2966,8 @@ class VoteDocxApp(tk.Tk):
         confirm_button = ttk.Button(footer, text="确认预览，允许导出", command=confirm_preview)
         confirm_button.pack(side="right")
         dialog.protocol("WM_DELETE_WINDOW", reject_preview)
-        load_field_controls()
+        paint_canvas()
+        load_adjustment_controls()
         canvas.focus_set()
 
     def on_validation_changed(self):
@@ -2935,6 +3007,9 @@ class VoteDocxApp(tk.Tk):
             return None
 
     def export_all(self):
+        if self.export_in_progress:
+            messagebox.showinfo("正在导出", "批量导出正在进行，请勿重复点击。")
+            return
         if not self.template_path.get() or not self.data_path.get():
             messagebox.showwarning("缺少文件", "请先选择模板和数据源。")
             return
@@ -2946,7 +3021,19 @@ class VoteDocxApp(tk.Tk):
             messagebox.showwarning("缺少标注", "请先在“模板格式刷”里配置投票选项的标记区。")
             return
 
-        thread = threading.Thread(target=self._export_worker, daemon=True)
+        template_path = self.template_path.get()
+        data_path = self.data_path.get()
+        output_dir = self.output_dir.get()
+        mapping_snapshot = copy.deepcopy(self.mapping)
+        self.export_in_progress = True
+        export_button = self.workflow_buttons.get("export")
+        if export_button is not None:
+            export_button.configure(state="disabled")
+        thread = threading.Thread(
+            target=self._export_worker,
+            args=(template_path, data_path, mapping_snapshot, output_dir),
+            daemon=True,
+        )
         thread.start()
 
     def invalidate_preview(self):
@@ -2955,16 +3042,16 @@ class VoteDocxApp(tk.Tk):
         if self.workflow_buttons:
             self.reset_workflow_after("preview", "export")
 
-    def _export_worker(self):
+    def _export_worker(self, template_path: str, data_path: str, mapping_snapshot: Dict[str, Any], output_dir: str):
         try:
-            export_mode = self.mapping.get("exportMode") or "multi"
+            export_mode = mapping_snapshot.get("exportMode") or "multi"
             mode_label = "单文件" if export_mode == "single" else "多文件"
             self.log(f"开始批量导出 DOCX... 模式：{mode_label}")
             outputs, warnings, exception_path, failed_count, summary_path, _summary_failed_count, run_output_dir = generate_all(
-                self.template_path.get(),
-                self.data_path.get(),
-                self.mapping,
-                self.output_dir.get(),
+                template_path,
+                data_path,
+                mapping_snapshot,
+                output_dir,
             )
             self.log(f"生成文件：{len(outputs)} 个 DOCX。输出目录：{run_output_dir}")
             for output in outputs:
@@ -2978,17 +3065,29 @@ class VoteDocxApp(tk.Tk):
                 for item in warnings:
                     self.log(f"  - {item}")
             def done_message():
+                self.export_in_progress = False
+                export_button = self.workflow_buttons.get("export")
+                if export_button is not None:
+                    export_button.configure(state="normal")
                 self.mark_workflow_done("export")
                 messagebox.showinfo(
                     "导出完成",
                     f"导出模式：{mode_label}\n生成 DOCX：{len(outputs)} 个。\n未导出 {failed_count} 行。\n输出目录：{run_output_dir}\n汇总文件：{summary_path or '无'}",
                 )
 
-            self.after(0, done_message)
+            self.post_to_ui(done_message)
         except Exception as exc:
             error_message = str(exc)
             self.log(f"导出失败：{error_message}")
-            self.after(0, lambda message=error_message: messagebox.showerror("导出失败", message))
+
+            def show_error(message=error_message):
+                self.export_in_progress = False
+                export_button = self.workflow_buttons.get("export")
+                if export_button is not None:
+                    export_button.configure(state="normal")
+                messagebox.showerror("导出失败", message)
+
+            self.post_to_ui(show_error)
 
     def check_for_updates(self):
         if self.update_button is not None:
@@ -3003,7 +3102,7 @@ class VoteDocxApp(tk.Tk):
             release = fetch_latest_release()
         except Exception as exc:
             error_message = str(exc)
-        self.after(0, lambda: self._finish_update_check(release, error_message))
+        self.post_to_ui(lambda: self._finish_update_check(release, error_message))
 
     def _finish_update_check(self, release: Optional[ReleaseInfo], error_message: str):
         if self.update_button is not None:
@@ -3046,7 +3145,7 @@ class VoteDocxApp(tk.Tk):
         if threading.current_thread() is threading.main_thread():
             append()
         else:
-            self.after(0, append)
+            self.post_to_ui(append)
 
 
 if __name__ == "__main__":
