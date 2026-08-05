@@ -117,7 +117,7 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
     normal._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), "Microsoft YaHei UI")
     normal.font.size = Pt(10.5)
 
-    document.core_properties.title = "群众选票格式化打印工具 v0.3.5 使用说明"
+    document.core_properties.title = "群众选票格式化打印工具 v0.3.6 使用说明"
     document.core_properties.author = "群众选票格式化打印工具"
     document.core_properties.subject = "Gitee 无依赖便携版操作说明"
 
@@ -131,7 +131,7 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
     )
     add_para(
         document,
-        "v0.3.5 · 无外部依赖便携版 · 真实 PDF 打印预览",
+        "v0.3.6 · Word / WPS / 内置引擎 · 真实 PDF 打印预览",
         size=12,
         color="176B87",
         align=WD_ALIGN_PARAGRAPH.CENTER,
@@ -142,7 +142,7 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
     shade_cell(callout.cell(0, 0), "E7F5F7")
     set_cell_text(
         callout.cell(0, 0),
-        "用途：读取 Word 表决票模板和 CSV/XLSX 投票数据，通过可视化标注生成 DOCX；导出前由 Microsoft Word 或程序内置引擎生成真实 PDF 预览，文字和打勾均可拖拽或用方向键微调。",
+        "用途：读取 Word 表决票模板和 CSV/XLSX 投票数据，通过可视化标注生成 DOCX；导出前按 Microsoft Word、WPS、内置引擎的顺序生成真实 PDF 预览，文字和打勾均可拖拽或用方向键微调。",
         size=10.5,
     )
 
@@ -167,7 +167,7 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
         "2. 上传数据文件：选择 CSV/XLSX，并设置有效投票结果数量。",
         "3. 设置模板：选择字段或投票结果，按顺序标注判断区和标记区。",
         "4. 确认设置：保存当前模板全部判断区、标记区、字段位置和样式。",
-        "5. 导出前预览：查看 Word 或内置引擎生成的真实 PDF 页面，并调整文字/打勾位置。",
+        "5. 导出前预览：查看 Word、WPS 或内置引擎生成的真实 PDF 页面，并调整文字/打勾位置。",
         "6. 开始导出：生成多文件或单文件 DOCX，并输出投票结果汇总表。",
     ]:
         add_para(document, step)
@@ -180,7 +180,8 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
 
     add_heading(document, "四、真实打印预览与位置调整")
     for item in [
-        "导出前预览由 Microsoft Word 或程序内置文档引擎生成真实 PDF 页面。",
+        "导出前预览按 Microsoft Word → WPS Writer → 内置文档引擎的顺序生成真实 PDF 页面。",
+        "已安装 WPS 但没有 Word 时，预览会优先贴近 WPS 实际打印效果；两者都没有时仍可零依赖运行。",
         "左侧“调整对象”同时列出用户信息文字和当前票面实际出现的打勾。",
         "可直接拖动红框；普通方向键移动 1pt，Shift 移动 5pt，Ctrl 移动 0.1pt。",
         "停手后后台重新生成精确文档→PDF 预览；刷新完成前不能确认导出。",
@@ -191,7 +192,28 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
     main_image = screenshot_dir / "release-main.png"
     if main_image.exists():
         add_heading(document, "五、正式程序")
-        add_image(document, main_image, "图 3：本地构建并启动的 v0.3.5 正式程序")
+        add_image(document, main_image, "图 3：本地构建并启动的 v0.3.6 正式程序")
+
+    add_heading(document, "六、随版本完成的测试数据与结果")
+    test_table = document.add_table(rows=1, cols=4)
+    test_table.style = "Table Grid"
+    for cell, text in zip(test_table.rows[0].cells, ("楼栋房号", "姓名", "电话号码", "投票选项")):
+        shade_cell(cell, "123B5D")
+        set_cell_text(cell, text, bold=True, color="FFFFFF", size=9)
+    for values in [
+        ("1-101", "验收用户", "13900000000", "选项1"),
+        ("2-202", "方向键测试", "13800000000", "选项2"),
+    ]:
+        cells = test_table.add_row().cells
+        for cell, value in zip(cells, values):
+            set_cell_text(cell, value, size=9)
+    for result in [
+        "29 项单元测试全部通过，覆盖 Word → WPS → 内置引擎的优先级、失败回退和超时进程树清理。",
+        "纯净环境自检成功：v0.3.6、PDF 1 页；不需要 Word、WPS 或 Python。",
+        "真实预览验收成功：PDF 页面图像 1 张、当前票面打勾 1 个、方向键最终保存为 +1pt。",
+        "模板配置重启恢复成功：判断区/标记区由 1/1 恢复为 1/1；4 份批量回归 DOCX，0 条警告。",
+    ]:
+        add_bullet(document, result)
 
     add_heading(document, "七、导出与更新")
     for item in [
@@ -205,16 +227,17 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
 
     add_heading(document, "八、常见问题")
     for question, answer in [
-        ("预览为什么不再是灰色？", "v0.3.5 会在真实 PDF 转换完成后立即绘制页面；Canvas 至少包含一张实际 PDF 页面图像。"),
+        ("预览为什么不再是灰色？", "v0.3.6 会在真实 PDF 转换完成后立即绘制页面；Canvas 至少包含一张实际 PDF 页面图像。"),
         ("设置模板后原来的标记会消失吗？", "不会。同一模板按内容哈希恢复全部判断区、标记区、字段位置和样式。"),
         ("为什么确认预览按钮暂时不可点？", "说明程序正在重新生成精确文档→PDF 页面，完成后按钮会自动恢复。"),
-        ("没有安装 Word 怎么办？", "无需安装。完整便携版自带文档引擎，会自动完成真实 PDF 预览。"),
+        ("只有 WPS 可以吗？", "可以。程序会在没有 Word 时自动尝试 WPS；若 WPS 接口不可用，再自动回退到内置引擎。"),
+        ("Word 和 WPS 都没有怎么办？", "无需安装。完整便携版自带文档引擎，会自动完成真实 PDF 预览。"),
     ]:
         add_para(document, question, bold=True, color="123B5D")
         add_para(document, answer)
 
-    docx_path = output_dir / "群众选票格式化打印工具_v0.3.5_使用说明.docx"
-    pdf_path = output_dir / "群众选票格式化打印工具_v0.3.5_使用说明.pdf"
+    docx_path = output_dir / "群众选票格式化打印工具_v0.3.6_使用说明.docx"
+    pdf_path = output_dir / "群众选票格式化打印工具_v0.3.6_使用说明.pdf"
     document.save(docx_path)
 
     from print_preview import docx_to_pdf
@@ -224,7 +247,7 @@ def build(output_dir: Path, screenshot_dir: Path) -> tuple[Path, Path]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build the illustrated v0.3.5 DOCX/PDF user manual.")
+    parser = argparse.ArgumentParser(description="Build the illustrated v0.3.6 DOCX/PDF user manual.")
     parser.add_argument("output_dir")
     parser.add_argument("screenshot_dir")
     args = parser.parse_args()

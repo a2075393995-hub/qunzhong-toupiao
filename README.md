@@ -2,7 +2,7 @@
 
 面向 Windows 的群众选票格式化打印工具。读取 Word 选票模板和 CSV/XLSX 投票数据，通过可视化标注写入姓名、房号、电话和投票结果，批量生成 DOCX，并输出投票结果汇总表。
 
-当前版本：v0.3.5。正式发布物为无外部依赖便携版，目标电脑不需要安装 Python、Microsoft Office、LibreOffice或其他运行库。应用内更新源为 Gitee，GitHub 作为同步镜像和自动构建渠道。
+当前版本：v0.3.6。正式发布物为无外部依赖便携版，目标电脑不需要安装 Python、Microsoft Office、WPS、LibreOffice或其他运行库。应用内更新源为 Gitee，GitHub 作为同步镜像和自动构建渠道。
 
 ## 功能
 
@@ -19,13 +19,13 @@
 运行 `tools/build_portable.ps1` 会从 Document Foundation 官方下载 LibreOffice MSI，通过管理提取方式准备便携运行时，不会安装到构建电脑。发布包结构如下：
 
 ```text
-QunzhongVote-v0.3.5-Portable/
+QunzhongVote-v0.3.6-Portable/
 ├─ QunzhongVote.exe（启动后为中文界面）
 ├─ PORTABLE_README.txt
 └─ runtime/libreoffice/...
 ```
 
-目标电脑完整解压后直接运行 EXE。电脑存在 Microsoft Word 时程序优先使用 Word；没有 Word 时自动调用便携包内置引擎。每次转换使用独立临时配置目录，不读取或修改目标电脑上的 LibreOffice 用户配置。
+目标电脑完整解压后直接运行 EXE。程序按 Microsoft Word → WPS Writer → 便携包内置引擎的顺序生成真实 PDF：有 Word 时保持 Word 打印效果；只有 WPS 时尽量贴近 WPS 实际打印；两者都没有时仍可零依赖运行。Word/WPS 自动化在带超时的独立后台进程中执行，失败会自动回退，超时会清理完整辅助进程树；内置引擎每次转换使用独立临时配置目录，不读取或修改目标电脑上的 LibreOffice 用户配置。
 
 ## 本地开发
 
@@ -43,7 +43,7 @@ python app.py
 .\tools\build_portable.ps1
 ```
 
-正式便携 ZIP 输出到 `dist/QunzhongVote-v0.3.5-Windows-Portable.zip`。
+正式便携 ZIP 输出到 `dist/QunzhongVote-v0.3.6-Windows-Portable.zip`。
 
 ## 代码结构
 

@@ -1,11 +1,23 @@
 param(
     [string]$LibreOfficeVersion = "26.2.5",
+    [string]$Version = "",
     [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $versionSource = Get-Content -LiteralPath (Join-Path $repoRoot "update_service.py") -Raw -Encoding utf8
+    $versionMatch = [regex]::Match($versionSource, 'APP_VERSION\s*=\s*"([^"]+)"')
+    if (-not $versionMatch.Success) {
+        throw "Unable to read APP_VERSION from update_service.py."
+    }
+    $Version = $versionMatch.Groups[1].Value
+}
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Invalid release version: $Version"
+}
 $python = if (Test-Path -LiteralPath (Join-Path $repoRoot ".venv\Scripts\python.exe")) {
     Join-Path $repoRoot ".venv\Scripts\python.exe"
 } else {
@@ -21,7 +33,7 @@ if (-not $SkipTests) {
 & $python -m PyInstaller --noconfirm --clean VoteDocxApp.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 
-$portableRoot = Join-Path $repoRoot "dist\QunzhongVote-v0.3.5-Portable"
+$portableRoot = Join-Path $repoRoot "dist\QunzhongVote-v$Version-Portable"
 $runtimeTarget = Join-Path $portableRoot "runtime\libreoffice"
 if (Test-Path -LiteralPath $portableRoot) {
     Remove-Item -LiteralPath $portableRoot -Recurse -Force
@@ -32,7 +44,7 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "dist\QunzhongVote.exe") -Destinatio
 Copy-Item -Path (Join-Path $repoRoot "vendor\libreoffice\*") -Destination $runtimeTarget -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "PORTABLE_README.txt") -Destination $portableRoot -Force
 
-$zipPath = Join-Path $repoRoot "dist\QunzhongVote-v0.3.5-Windows-Portable.zip"
+$zipPath = Join-Path $repoRoot "dist\QunzhongVote-v$Version-Windows-Portable.zip"
 if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }

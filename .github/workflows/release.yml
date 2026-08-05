@@ -6,7 +6,7 @@ on:
       version:
         description: "Release version without the v prefix"
         required: true
-        default: "0.3.5"
+        default: "0.3.6"
   push:
     tags:
       - "v*"
@@ -42,16 +42,23 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: qunzhong-toupiao-windows-portable
-          path: dist/QunzhongVote-v0.3.5-Windows-Portable.zip
+          path: dist/*-Windows-Portable.zip
 
       - name: Resolve release tag
         id: release
         shell: pwsh
         run: |
+          $version = python -c "from update_service import APP_VERSION; print(APP_VERSION)"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "v${{ inputs.version }}"
+            if ("${{ inputs.version }}" -ne $version) {
+              throw "Requested version ${{ inputs.version }} does not match APP_VERSION $version"
+            }
+            $tag = "v$version"
           } else {
             $tag = "${{ github.ref_name }}"
+            if ($tag -ne "v$version") {
+              throw "Tag $tag does not match APP_VERSION $version"
+            }
           }
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
@@ -60,4 +67,7 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ steps.release.outputs.tag }}" "dist/QunzhongVote-v0.3.5-Windows-Portable.zip" --notes-file RELEASE_NOTES.md --title "群众投票 ${{ steps.release.outputs.tag }}"
+        run: |
+          $asset = Get-ChildItem -LiteralPath dist -Filter "*-Windows-Portable.zip" | Select-Object -First 1
+          if (-not $asset) { throw "Portable ZIP not found." }
+          gh release create "${{ steps.release.outputs.tag }}" "$($asset.FullName)" --notes-file RELEASE_NOTES.md --title "群众投票 ${{ steps.release.outputs.tag }}"

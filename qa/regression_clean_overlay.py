@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from copy import deepcopy
 from pathlib import Path
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
 from vote_core import auto_mapping_for_template, build_document_for_record, read_vote_records_for_mapping, split_options
 

@@ -20,7 +20,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-from print_preview import docx_to_pdf, render_pdf_pages, search_pdf_text
+from print_preview import docx_to_pdf, render_pdf_pages, run_com_export, search_pdf_text
 from template_profiles import (
     load_template_profile,
     mapping_area_counts,
@@ -2216,7 +2216,7 @@ class VoteDocxApp(tk.Tk):
         offset_y = tk.DoubleVar(value=0)
         zoom_percent = tk.StringVar(value="100")
         paper_text = tk.StringVar(value=page_info[0]["label"] if page_info else "未识别纸张")
-        preview_status = tk.StringVar(value="由 Microsoft Word 或内置文档引擎生成真实 PDF 页面。")
+        preview_status = tk.StringVar(value="由 Microsoft Word、WPS 或内置文档引擎生成真实 PDF 页面。")
 
         header = ttk.Frame(dialog, padding=(12, 10))
         header.pack(side="top", fill="x")
@@ -3176,6 +3176,13 @@ def run_offline_office_self_test(report_path: str | Path) -> int:
 
 
 if __name__ == "__main__":
+    if "--com-export" in sys.argv:
+        option_index = sys.argv.index("--com-export")
+        arguments = sys.argv[option_index + 1 : option_index + 5]
+        if len(arguments) != 4:
+            raise SystemExit(2)
+        report, progid, source, target = arguments
+        raise SystemExit(run_com_export(progid, source, target, report))
     if "--self-test-office" in sys.argv:
         option_index = sys.argv.index("--self-test-office")
         report = sys.argv[option_index + 1] if option_index + 1 < len(sys.argv) else str(BASE_DIR / "office-self-test.json")
