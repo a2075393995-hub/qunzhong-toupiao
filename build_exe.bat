@@ -16,12 +16,10 @@ if errorlevel 1 goto :failed
 python -m unittest discover -s tests -v
 if errorlevel 1 goto :failed
 
-python -m PyInstaller --noconfirm --clean VoteDocxApp.spec
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\build_portable.ps1"
 if errorlevel 1 goto :failed
 
-for /f %%v in ('python -c "from update_service import APP_VERSION; print(APP_VERSION)"') do set "APP_VERSION=%%v"
-copy /Y "dist\QunzhongVote.exe" "群众投票_v%APP_VERSION%.exe" >nul
-echo 已生成：%~dp0群众投票_v%APP_VERSION%.exe
+echo 已生成：%~dp0dist\QunzhongVote-v0.3.5-Windows-Portable.zip
 pause
 exit /b 0
 

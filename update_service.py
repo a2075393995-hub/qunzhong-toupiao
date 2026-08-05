@@ -9,7 +9,7 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.3.5"
 GITEE_OWNER = "zhang-jiaxin654"
 GITEE_REPOSITORY = "qunzhong-toupiao"
 REPOSITORY_URL = f"https://gitee.com/{GITEE_OWNER}/{GITEE_REPOSITORY}"

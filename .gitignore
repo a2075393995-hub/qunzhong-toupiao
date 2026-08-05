@@ -13,6 +13,8 @@ venv/
 build/
 dist/
 output/
+vendor/
+downloads/
 *.exe
 *.7z
 *.zip

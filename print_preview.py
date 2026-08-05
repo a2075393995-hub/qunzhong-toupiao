@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import shutil
-import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
+
+from office_runtime import convert_with_soffice, find_bundled_soffice, force_bundled_office
 
 
 PDF_FORMAT = 17
@@ -13,7 +14,7 @@ POINTS_PER_MM = 72.0 / 25.4
 
 
 def docx_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> Path:
-    """Export a DOCX through Word so preview geometry matches printing."""
+    """Export a DOCX to fixed-layout PDF using Word or the bundled engine."""
     source = Path(docx_path).resolve()
     if not source.exists():
         raise FileNotFoundError(f"预览文件不存在：{source}")
@@ -23,57 +24,61 @@ def docx_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> Pa
         target.unlink()
 
     word_error: Optional[Exception] = None
-    try:
-        import pythoncom
-        import win32com.client
-
-        pythoncom.CoInitialize()
-        word = None
-        document = None
+    if not force_bundled_office():
         try:
-            word = win32com.client.DispatchEx("Word.Application")
-            word.Visible = False
-            word.DisplayAlerts = 0
-            document = word.Documents.Open(str(source), ReadOnly=True, AddToRecentFiles=False)
-            document.ExportAsFixedFormat(str(target), PDF_FORMAT)
-        finally:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\WINWORD.EXE",
+            ):
+                pass
+            word_registered = True
+        except OSError:
+            word_registered = False
+    else:
+        word_registered = False
+
+    if word_registered:
+        try:
+            import pythoncom
+            import win32com.client
+
+            pythoncom.CoInitialize()
+            word = None
+            document = None
             try:
-                if document is not None:
-                    document.Close(False)
+                word = win32com.client.DispatchEx("Word.Application")
+                word.Visible = False
+                word.DisplayAlerts = 0
+                document = word.Documents.Open(str(source), ReadOnly=True, AddToRecentFiles=False)
+                document.ExportAsFixedFormat(str(target), PDF_FORMAT)
             finally:
                 try:
-                    if word is not None:
-                        word.Quit()
+                    if document is not None:
+                        document.Close(False)
                 finally:
-                    pythoncom.CoUninitialize()
-        if target.exists():
-            return target
-    except Exception as exc:  # pragma: no cover - depends on local Office installation
-        word_error = exc
+                    try:
+                        if word is not None:
+                            word.Quit()
+                    finally:
+                        pythoncom.CoUninitialize()
+            if target.exists():
+                return target
+        except Exception as exc:  # pragma: no cover - depends on local Office installation
+            word_error = exc
 
-    soffice_candidates = [
-        shutil.which("soffice"),
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-    soffice = next((item for item in soffice_candidates if item and Path(item).exists()), None)
-    if soffice:
-        completed = subprocess.run(
-            [str(soffice), "--headless", "--convert-to", "pdf", "--outdir", str(target.parent), str(source)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        generated = target.parent / f"{source.stem}.pdf"
-        if completed.returncode == 0 and generated.exists():
-            if generated != target:
-                generated.replace(target)
-            return target
-
-    detail = f"\nWord 导出错误：{word_error}" if word_error else ""
-    raise RuntimeError(
-        "无法生成真实打印预览。请确认已安装 Microsoft Word；也可以安装 LibreOffice 作为备用转换器。" + detail
-    )
+    try:
+        with tempfile.TemporaryDirectory(prefix="QunzhongVote-PDF-") as converted_dir:
+            generated = convert_with_soffice(source, converted_dir, "pdf:writer_pdf_Export", ".pdf")
+            generated.replace(target)
+        return target
+    except Exception as bundled_error:
+        word_detail = f"；Microsoft Word 错误：{word_error}" if word_error else ""
+        bundled_state = "已找到" if find_bundled_soffice() else "未找到"
+        raise RuntimeError(
+            f"无法生成真实打印预览。内置文档引擎{bundled_state}但转换失败：{bundled_error}{word_detail}"
+        ) from bundled_error
 
 
 def page_size_label(width_points: float, height_points: float) -> str:

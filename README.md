@@ -1,68 +1,61 @@
-# 群众投票
+# 群众选票格式化打印工具
 
-一个面向 Windows 的群众选票格式化打印工具。程序读取 Word 选票模板和 CSV/XLSX 投票数据，通过可视化标注将姓名、房号、电话和投票结果写入模板，批量生成 DOCX，并输出投票结果汇总表。
+面向 Windows 的群众选票格式化打印工具。读取 Word 选票模板和 CSV/XLSX 投票数据，通过可视化标注写入姓名、房号、电话和投票结果，批量生成 DOCX，并输出投票结果汇总表。
 
-当前版本：v0.3.4。判断区、标记区、字段位置和样式会按模板内容自动保存在本机；重新选择同一模板或重启程序后会自动恢复。应用内更新源为 Gitee，GitHub 作为同步镜像和自动构建渠道。
+当前版本：v0.3.5。正式发布物为无外部依赖便携版，目标电脑不需要安装 Python、Microsoft Office、LibreOffice或其他运行库。应用内更新源为 Gitee，GitHub 作为同步镜像和自动构建渠道。
 
-## 主要功能
+## 功能
 
-- 导入 Word 模板和 CSV/XLSX 数据。
-- 可视化设置字段位置和投票打勾位置。
-- 使用 Microsoft Word 导出 PDF 的真实打印预览，自动显示纸张尺寸、方向和分页。
-- 所有最终位置调整统一放在真实打印预览中：楼栋、房号、完整地址、姓名、电话和当前票面的打勾都可直接拖动，也可用方向键微调（普通 1pt、Shift 5pt、Ctrl 0.1pt），停手后自动校准为精确的 Word→PDF 效果。
-- 导出前预览只显示 Word 直接导出的真实 PDF 页面；精确刷新完成前禁止确认导出，避免预览与打印结果不一致。
-- 自动把 `1-101`、`1栋101室` 等地址拆成楼栋与房号，并保留模板原有的“栋/幢/室”和下划线格式。
-- 支持一人一份 DOCX 或合并为单个 DOCX。
-- 支持纯净打印模式、异常数据检查和 XLSX 汇总。
-- 内置“检查更新”按钮，从 Gitee Releases 检查正式版本并打开 Gitee 下载页。
-- 仓库内提供完全虚构的 `samples/示例投票数据.csv`，可用于功能测试和异常票验证。
+- 导入 `.docx`/`.doc` 模板和 CSV/XLSX 数据。
+- 可视化设置判断区、标记区和用户字段位置。
+- 真实 PDF 打印预览，显示纸张尺寸、方向和分页。
+- 楼栋、房号、完整地址、姓名、电话和打勾均可拖拽；方向键移动 1pt、Shift 5pt、Ctrl 0.1pt。
+- 精确预览刷新完成前禁止确认导出，避免旧画面被误确认。
+- 模板判断区、标记区、字段位置和样式按模板内容自动保存并在重启后恢复。
+- 支持单文件和多文件 DOCX 导出以及投票汇总表。
 
-## 本地运行
+## 无依赖便携版
 
-需要 Python 3.10 或更高版本。
+运行 `tools/build_portable.ps1` 会从 Document Foundation 官方下载 LibreOffice MSI，通过管理提取方式准备便携运行时，不会安装到构建电脑。发布包结构如下：
 
-真实打印预览优先使用本机 Microsoft Word；未安装 Word 时可安装 LibreOffice 作为备用转换器。
+```text
+QunzhongVote-v0.3.5-Portable/
+├─ QunzhongVote.exe（启动后为中文界面）
+├─ PORTABLE_README.txt
+└─ runtime/libreoffice/...
+```
+
+目标电脑完整解压后直接运行 EXE。电脑存在 Microsoft Word 时程序优先使用 Word；没有 Word 时自动调用便携包内置引擎。每次转换使用独立临时配置目录，不读取或修改目标电脑上的 LibreOffice 用户配置。
+
+## 本地开发
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m unittest discover -s tests -v
 python app.py
 ```
 
-## 构建 Windows EXE
+构建完整便携版：
 
 ```powershell
-python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m PyInstaller --noconfirm --clean VoteDocxApp.spec
+.\tools\build_portable.ps1
 ```
 
-构建结果位于 `dist/QunzhongVote.exe`。也可以直接运行 `build_exe.bat`，脚本会生成带版本号的中文文件名。
+正式便携 ZIP 输出到 `dist/QunzhongVote-v0.3.5-Windows-Portable.zip`。
 
-## 发布和应用内更新
+## 代码结构
 
-版本号定义在 `update_service.py` 的 `APP_VERSION`。
+- `app.py`：桌面界面和工作流。
+- `vote_core.py`：模板解析、标记写入和批量导出。
+- `office_runtime.py`：内置文档引擎定位、隔离配置和转换执行。
+- `print_preview.py`：DOCX→PDF、纸张识别和 PDF 页面渲染。
+- `template_profiles.py`：模板配置持久化。
+- `update_service.py`：Gitee 更新检查。
+- `tools/prepare_libreoffice.ps1`：下载并准备官方便携运行时。
+- `tools/build_portable.ps1`：测试、构建和压缩 Windows 便携版。
 
-1. 修改 `APP_VERSION`，例如从 `0.1.0` 改为 `0.2.0`。
-2. 提交代码并推送标签 `v0.2.0`。
-3. GitHub Actions 自动构建 Windows EXE，并创建 GitHub 镜像 Release；同一 EXE 同步上传到 Gitee Release。
-4. 已安装的程序点击“检查更新”后，会匿名访问公开的 Gitee Releases，比对版本并打开新版下载页。
+## 数据安全
 
-客户端不需要 Gitee Token，也不会保存或上传用户的选票模板、投票数据和导出文件。
-
-- Gitee 主更新仓库：`https://gitee.com/zhang-jiaxin654/qunzhong-toupiao`
-- GitHub 同步镜像：`https://github.com/a2075393995-hub/qunzhong-toupiao`
-
-## 项目结构
-
-- `app.py`：Tkinter 桌面界面和操作流程。
-- `vote_core.py`：数据解析、模板标注和 DOCX/XLSX 导出核心。
-- `print_preview.py`：Word→PDF 固定版式导出、纸张识别和 PDF 页面渲染。
-- `update_service.py`：Gitee Release 检查与版本比较。
-- `qa/`：模板和界面回归辅助脚本。
-- `tests/`：可独立运行的单元测试。
-- `.github/workflows/release.yml`：按版本标签自动构建和发布。
-
-## 数据与隐私
-
-模板、投票数据、预览和导出结果默认只保存在本机。仓库忽略 `output/`、构建目录、缓存以及常见本地环境文件；提交前仍应自行确认测试数据不含真实个人信息。
+仓库和正式发布包不包含示例投票数据、真实模板或用户数据。模板、投票数据、预览和导出结果默认仅保存在本机，联网只用于用户主动检查 Gitee 更新。

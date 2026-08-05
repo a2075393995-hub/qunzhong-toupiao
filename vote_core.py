@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import csv
 import re
-import shutil
-import subprocess
 import zipfile
 import xml.etree.ElementTree as ET
 from copy import deepcopy
@@ -19,6 +17,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor, Twips
+
+from office_runtime import convert_with_soffice
 
 
 APP_NAME = "群众选票格式化打印工具"
@@ -2364,29 +2364,12 @@ def convert_doc_to_docx(path: str | Path, output_dir: str | Path) -> Path:
     output_directory = Path(output_dir)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    possible_soffice = [
-        shutil.which("soffice"),
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-    ]
-    soffice = next((item for item in possible_soffice if item and Path(item).exists()), None)
-    if not soffice:
-        raise RuntimeError("当前电脑未找到 LibreOffice，无法自动把 .doc 转成 .docx。请先另存为 .docx 后导入。")
-
-    command = [
-        str(soffice),
-        "--headless",
-        "--convert-to",
-        "docx",
-        "--outdir",
-        str(output_directory),
-        str(source),
-    ]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
-    converted = output_directory / f"{source.stem}.docx"
-    if completed.returncode != 0 or not converted.exists():
-        raise RuntimeError("模板转换失败：" + (completed.stderr or completed.stdout or "未知错误"))
-    return converted
+    return convert_with_soffice(
+        source,
+        output_directory,
+        "docx:Office Open XML Text",
+        ".docx",
+    )
 
 
 def create_figure2_template(path: str | Path) -> Path:

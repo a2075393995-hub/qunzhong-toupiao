@@ -6,7 +6,7 @@ on:
       version:
         description: "Release version without the v prefix"
         required: true
-        default: "0.3.4"
+        default: "0.3.5"
   push:
     tags:
       - "v*"
@@ -34,18 +34,15 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v
 
-      - name: Build executable
-        run: python -m PyInstaller --noconfirm --clean VoteDocxApp.spec
-
-      - name: Prepare release asset
+      - name: Build self-contained portable package
         shell: pwsh
-        run: Copy-Item -LiteralPath "dist/QunzhongVote.exe" -Destination "dist/qunzhong-toupiao.exe"
+        run: .\tools\build_portable.ps1 -SkipTests
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: qunzhong-toupiao-windows
-          path: dist/qunzhong-toupiao.exe
+          name: qunzhong-toupiao-windows-portable
+          path: dist/QunzhongVote-v0.3.5-Windows-Portable.zip
 
       - name: Resolve release tag
         id: release
@@ -63,4 +60,4 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ steps.release.outputs.tag }}" "dist/qunzhong-toupiao.exe" --notes-file RELEASE_NOTES.md --title "群众投票 ${{ steps.release.outputs.tag }}"
+        run: gh release create "${{ steps.release.outputs.tag }}" "dist/QunzhongVote-v0.3.5-Windows-Portable.zip" --notes-file RELEASE_NOTES.md --title "群众投票 ${{ steps.release.outputs.tag }}"

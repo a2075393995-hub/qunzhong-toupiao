@@ -1,17 +1,20 @@
-# 群众投票 v0.3.4
+# 群众投票 v0.3.5
 
-本版本将正式更新源迁移到 Gitee，并提供带真实截图、脱敏测试数据和 PDF 使用说明的完整交付包。
+本版本提供 Windows 10/11 64 位无外部依赖便携版。完整解压 ZIP 后即可运行，不需要安装 Python、Microsoft Office、LibreOffice或其他运行库。
 
-## 更新内容
+## 主要更新
 
-- 应用内“检查更新”从 GitHub 迁移到公开的 Gitee Release API，下载页和源码仓库入口均指向 Gitee。
-- Gitee API 不返回 `html_url` 时，客户端会根据 Release 标签生成正确的 Gitee 下载页地址。
-- Gitee OpenAPI 不可用或受限时，会从公开 Releases 页面读取最新标签作为备用。
-- 新增 Gitee API、Release 页面回退和下载页地址单元测试。
-- 新增完全虚构的测试数据，不包含用户姓名、真实电话或原始投票数据。
-- 使用说明升级为带截图的 PDF，覆盖六步流程、模板标注、真实打印预览、位置微调、导出模式和常见问题。
-- 延续 v0.3.3 的真实 Word→PDF 预览、文字/打勾拖拽、方向键微调、线程安全刷新和模板标注恢复功能。
+- 随便携版内置 LibreOffice Writer 无界面文档转换引擎。
+- 电脑已安装 Microsoft Word 时继续优先使用 Word，保持原有精确打印效果。
+- 未安装 Word 时自动使用内置引擎生成真实 PDF 打印预览，完整流程不再被 Office 依赖阻断。
+- `.doc` 模板转换也改为使用内置引擎。
+- 每次转换使用独立临时用户配置，避免并发预览、快速微调时发生文件锁和进程冲突。
+- 增加转换超时、隐藏后台窗口和明确的运行时缺失提示。
+- 保留文字和打勾拖拽、方向键微调、模板判断区/标记区自动保存恢复、批量 DOCX 导出等现有功能。
+- 清理旧缓存、旧构建产物和仓库示例数据；正式便携包不包含任何示例或用户数据。
 
-## 下载与使用
+## 使用方法
 
-下载 `qunzhong-toupiao.exe` 后直接运行。模板配置保存在本机 `%LOCALAPPDATA%\QunzhongVote\template_profiles.json`，模板、投票数据、配置和导出结果都不会上传到网络。Gitee Release 同时提供 PDF 使用说明和脱敏测试数据。
+下载 `QunzhongVote-v0.3.5-Windows-Portable.zip`，完整解压后双击 `QunzhongVote.exe`（启动后为中文界面）。请不要只复制 EXE，旁边的 `runtime` 文件夹是程序自带的文档引擎。
+
+模板配置仍保存在本机 `%LOCALAPPDATA%\QunzhongVote\template_profiles.json`，升级不会删除已保存的判断区和标记区。

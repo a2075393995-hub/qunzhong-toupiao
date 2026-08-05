@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import queue
 import sys
+import tempfile
 import threading
 import tkinter as tk
 import webbrowser
@@ -2057,7 +2059,7 @@ class VoteDocxApp(tk.Tk):
 
         loading_body = ttk.Frame(loading, padding=20)
         loading_body.pack(fill="both", expand=True)
-        ttk.Label(loading_body, text="正在由 Word 生成真实打印预览", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(loading_body, text="正在生成真实打印预览", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
         ttk.Label(
             loading_body,
             text="程序仍在工作。完成后会自动显示与打印版一致的 PDF 页面。",
@@ -2081,7 +2083,7 @@ class VoteDocxApp(tk.Tk):
                 loading.destroy()
             self.preview_ready = False
             self.preview_path = None
-            self.status_text.set("正在停止真实打印预览；后台 Word 任务结束后可重新预览。")
+            self.status_text.set("正在停止真实打印预览；后台转换任务结束后可重新预览。")
 
         def finish_loading(
             initial_pdf: Optional[Path],
@@ -2214,7 +2216,7 @@ class VoteDocxApp(tk.Tk):
         offset_y = tk.DoubleVar(value=0)
         zoom_percent = tk.StringVar(value="100")
         paper_text = tk.StringVar(value=page_info[0]["label"] if page_info else "未识别纸张")
-        preview_status = tk.StringVar(value="由 Word 直接导出 PDF，纸张、分页和打印版一致。")
+        preview_status = tk.StringVar(value="由 Microsoft Word 或内置文档引擎生成真实 PDF 页面。")
 
         header = ttk.Frame(dialog, padding=(12, 10))
         header.pack(side="top", fill="x")
@@ -2684,7 +2686,7 @@ class VoteDocxApp(tk.Tk):
             paper_text.set(page_info[0]["label"] if page_info else "未识别纸张")
             paint_canvas()
             refresh_state["changeGroupOpen"] = False
-            preview_status.set("精确打印预览已更新，当前画面与 Word 打印结果一致。")
+            preview_status.set("精确打印预览已更新，当前画面与实际 PDF 页面一致。")
             set_confirm_enabled(True)
             self.save_current_template_profile()
 
@@ -2701,7 +2703,7 @@ class VoteDocxApp(tk.Tk):
             template_path = self.template_path.get()
             data_path = self.data_path.get()
             output_dir = self.output_dir.get()
-            preview_status.set("正在后台生成精确的 Word→PDF 打印预览……")
+            preview_status.set("正在后台生成精确的文档→PDF 打印预览……")
 
             def worker():
                 generated_docx: Optional[Path] = None
@@ -3148,6 +3150,35 @@ class VoteDocxApp(tk.Tk):
             self.post_to_ui(append)
 
 
+def run_offline_office_self_test(report_path: str | Path) -> int:
+    os.environ["QUNZHONGVOTE_FORCE_BUNDLED_OFFICE"] = "1"
+    target = Path(report_path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="QunzhongVote-SelfTest-") as temp_dir:
+            source = Path(temp_dir) / "offline-self-test.docx"
+            document = Document()
+            document.add_heading("群众投票无依赖运行测试", level=1)
+            document.add_paragraph("楼栋：1栋　房号：101　姓名：测试　电话：00000000000")
+            document.save(source)
+            pdf = docx_to_pdf(source)
+            images, pages = render_pdf_pages(pdf)
+            result = {
+                "success": bool(images),
+                "version": APP_VERSION,
+                "pdfPages": len(images),
+                "paper": pages[0]["label"] if pages else "",
+            }
+    except Exception as exc:
+        result = {"success": False, "version": APP_VERSION, "error": str(exc)}
+    target.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return 0 if result.get("success") else 1
+
+
 if __name__ == "__main__":
+    if "--self-test-office" in sys.argv:
+        option_index = sys.argv.index("--self-test-office")
+        report = sys.argv[option_index + 1] if option_index + 1 < len(sys.argv) else str(BASE_DIR / "office-self-test.json")
+        raise SystemExit(run_offline_office_self_test(report))
     app = VoteDocxApp()
     app.mainloop()
