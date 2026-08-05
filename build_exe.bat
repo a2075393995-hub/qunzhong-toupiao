@@ -19,7 +19,7 @@ if errorlevel 1 goto :failed
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\build_portable.ps1"
 if errorlevel 1 goto :failed
 
-echo 已生成：%~dp0dist\QunzhongVote-v0.3.5-Windows-Portable.zip
+echo 已生成：%~dp0dist\QunzhongVote-v0.3.6-Windows-Portable.zip
 pause
 exit /b 0
 
