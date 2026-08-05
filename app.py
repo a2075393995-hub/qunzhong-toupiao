@@ -18,6 +18,13 @@ from docx.text.paragraph import Paragraph
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from print_preview import docx_to_pdf, render_pdf_pages, search_pdf_text
+from template_profiles import (
+    load_template_profile,
+    mapping_area_counts,
+    rebuild_pending_pair_index,
+    save_template_profile,
+    template_profile_key,
+)
 from update_service import APP_VERSION, REPOSITORY_URL, ReleaseInfo, fetch_latest_release, is_newer_version
 
 from vote_core import (
@@ -173,11 +180,38 @@ class VoteDocxApp(tk.Tk):
         self.result_group_text = tk.StringVar(value="多结果标记：未选择")
         self.last_result_selection: List[str] = []
         self.template_page_count: Optional[int] = None
+        self.current_template_profile_key: Optional[str] = None
         self.update_button: Optional[tk.Button] = None
 
         self._build_style()
         self._build_ui()
         self.set_debug_workspace_enabled(False)
+        self.protocol("WM_DELETE_WINDOW", self.on_app_close)
+
+    def on_app_close(self):
+        self.save_current_template_profile()
+        self.destroy()
+
+    def save_current_template_profile(self) -> bool:
+        template = self.template_path.get().strip()
+        if not template or not Path(template).is_file():
+            return False
+        return save_template_profile(
+            template,
+            self.mapping,
+            profile_key=self.current_template_profile_key,
+        )
+
+    def apply_mapping_to_controls(self) -> None:
+        validation = self.mapping.get("validation", {}) or {}
+        self.validation_mode.set(str(validation.get("mode") or "range"))
+        self.min_count.set(int(validation.get("min") or 0))
+        self.max_count.set(int(validation.get("max") or 0))
+        self.exact_count.set(int(validation.get("exact") or 0))
+        self.filename_prefix.set(str(self.mapping.get("filenamePrefix") or ""))
+        self.export_mode.set(str(self.mapping.get("exportMode") or "multi"))
+        self.clean_mode.set(bool(self.mapping.get("cleanMode", False)))
+        self.set_mark_style_controls(self.mapping.get("markStyle"))
 
     def set_window_icon(self):
         icon_path = resource_path("assets/app_icon.ico")
@@ -344,6 +378,7 @@ class VoteDocxApp(tk.Tk):
             messagebox.showinfo("尚未开始设置", "请先点击顶部“设置模板”。")
             return
         self.sync_validation_to_mapping(invalidate=False)
+        self.save_current_template_profile()
         self.debug_completed = True
         self.mark_workflow_done("debug_done")
         if self.records:
@@ -356,6 +391,8 @@ class VoteDocxApp(tk.Tk):
         self.preview_ready = False
         self.preview_path = None
         self.reset_workflow_after("debug_done", "preview", "export")
+        self.sync_validation_to_mapping(invalidate=False)
+        self.save_current_template_profile()
 
     def push_undo_state(self, label: str):
         self.undo_stack.append(
@@ -406,6 +443,7 @@ class VoteDocxApp(tk.Tk):
     def reset_app_state(self):
         if not messagebox.askyesno("确认重置", "确定清空当前模板、数据、标注和预览吗？\n\n已经导出的文件不会被删除。"):
             return
+        self.save_current_template_profile()
         self.template_path.set("")
         self.data_path.set("")
         self.output_dir.set(str(BASE_DIR / "output"))
@@ -440,6 +478,7 @@ class VoteDocxApp(tk.Tk):
         self.selected_key = None
         self.last_result_selection = []
         self.template_page_count = None
+        self.current_template_profile_key = None
         self.result_group_text.set("多结果标记：未选择")
         if self.field_list is not None:
             self.field_list.selection_clear(0, "end")
@@ -629,12 +668,18 @@ class VoteDocxApp(tk.Tk):
         if not path:
             return
         try:
+            self.sync_validation_to_mapping(invalidate=False)
+            self.save_current_template_profile()
             docx_path = convert_doc_to_docx(path, BASE_DIR / "converted")
             self.template_path.set(str(docx_path))
-            self.mapping = blank_mapping()
-            self.pending_pair_index = {}
+            self.current_template_profile_key = template_profile_key(docx_path)
+            restored_mapping = load_template_profile(docx_path)
+            self.mapping = restored_mapping if restored_mapping is not None else blank_mapping()
+            self.mapping["templateName"] = Path(docx_path).name
+            self.pending_pair_index = rebuild_pending_pair_index(self.mapping)
             self.mark_offset_x = 0
             self.mark_offset_y = 0
+            self.apply_mapping_to_controls()
             self.selected_mark_ref = None
             self.select_mark_for_adjust = False
             self.template_page_count = docx_page_count(docx_path)
@@ -648,6 +693,13 @@ class VoteDocxApp(tk.Tk):
             self.show_template_page_check()
             self.load_template_tables()
             self.refresh_mapping_tree()
+            judgment_count, mark_count = mapping_area_counts(self.mapping)
+            if restored_mapping is not None:
+                restored_text = f"已自动恢复模板设置：{judgment_count} 个判断区、{mark_count} 个标记区。"
+                self.status_text.set(restored_text)
+                self.log(restored_text)
+            else:
+                self.save_current_template_profile()
         except Exception as exc:
             messagebox.showerror("模板错误", str(exc))
 
@@ -739,6 +791,7 @@ class VoteDocxApp(tk.Tk):
             self.min_count.set(int(min_value.get() or 0))
             self.max_count.set(int(max_value.get() or 0))
             self.sync_validation_to_mapping(invalidate=False)
+            self.save_current_template_profile()
             accepted["value"] = True
             dialog.destroy()
 
@@ -843,6 +896,8 @@ class VoteDocxApp(tk.Tk):
                         return
             self.export_mode.set(mode.get())
             self.clean_mode.set(bool(clean.get()))
+            self.sync_validation_to_mapping(invalidate=False)
+            self.save_current_template_profile()
             accepted["value"] = True
             dialog.destroy()
 
@@ -889,6 +944,7 @@ class VoteDocxApp(tk.Tk):
 
     def on_filename_prefix_changed(self):
         self.mapping["filenamePrefix"] = self.filename_prefix.get().strip()
+        self.save_current_template_profile()
         self.invalidate_preview()
         self.update_file_status()
 
@@ -1898,7 +1954,7 @@ class VoteDocxApp(tk.Tk):
         result_name = self.result_name_for_key(self.selected_key)
         if result_name:
             self.mapping.setdefault("resultModes", {})[result_name] = self.choice_mode.get()
-        self.invalidate_preview()
+        self.mark_debug_dirty()
         self.refresh_mapping_tree()
 
     def apply_mark_style_to_selected(self):
@@ -1908,7 +1964,7 @@ class VoteDocxApp(tk.Tk):
         self.push_undo_state("调整打勾样式")
         config = self.mapping.setdefault("options", {}).setdefault(self.selected_key, {"label": self.selected_key})
         config["markStyle"] = self.current_mark_style()
-        self.invalidate_preview()
+        self.mark_debug_dirty()
         self.log(f"{self.selected_key} 打勾位置已调整。")
 
     def apply_mark_style_to_all(self):
@@ -1922,7 +1978,7 @@ class VoteDocxApp(tk.Tk):
             for pair in config.get("pairs", []) or []:
                 if pair.get("mark"):
                     pair["markStyle"] = dict(style)
-        self.invalidate_preview()
+        self.mark_debug_dirty()
         self.log("已将打勾位置应用到全部选项。")
 
     def on_mark_style_changed(self):
@@ -1936,7 +1992,7 @@ class VoteDocxApp(tk.Tk):
             self.mark_debug_dirty()
             return
         self.mapping["markStyle"] = dict(style)
-        self.invalidate_preview()
+        self.mark_debug_dirty()
 
     def nudge_mark(self, dx: int, dy: int):
         if not self.debug_workspace_enabled:
@@ -2573,6 +2629,7 @@ class VoteDocxApp(tk.Tk):
             refresh_state["changeGroupOpen"] = False
             preview_status.set("精确打印预览已更新，当前画面与 Word 打印结果一致。")
             set_confirm_enabled(True)
+            self.save_current_template_profile()
 
         def start_exact_refresh():
             if refresh_state["closed"] or refresh_state["running"]:
@@ -2843,6 +2900,7 @@ class VoteDocxApp(tk.Tk):
 
     def on_validation_changed(self):
         self.sync_validation_to_mapping()
+        self.save_current_template_profile()
         if self.records:
             self.load_data_preview()
 

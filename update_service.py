@@ -9,7 +9,7 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
 
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 GITHUB_OWNER = "a2075393995-hub"
 GITHUB_REPOSITORY = "qunzhong-toupiao"
 REPOSITORY_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPOSITORY}"
