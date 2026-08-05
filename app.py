@@ -3092,7 +3092,7 @@ class VoteDocxApp(tk.Tk):
     def check_for_updates(self):
         if self.update_button is not None:
             self.update_button.configure(state="disabled", text="检查中...")
-        self.log(f"正在从 GitHub 检查更新，当前版本：v{APP_VERSION}")
+        self.log(f"正在从 Gitee 检查更新，当前版本：v{APP_VERSION}")
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
 
     def _check_for_updates_worker(self):
@@ -3109,14 +3109,14 @@ class VoteDocxApp(tk.Tk):
             self.update_button.configure(state="normal", text="检查更新")
 
         if error_message:
-            self.log(f"GitHub 更新检查失败：{error_message}")
-            if messagebox.askyesno("检查更新失败", f"无法读取 GitHub 最新版本：\n{error_message}\n\n是否打开项目源码仓库？"):
+            self.log(f"Gitee 更新检查失败：{error_message}")
+            if messagebox.askyesno("检查更新失败", f"无法读取 Gitee 最新版本：\n{error_message}\n\n是否打开项目源码仓库？"):
                 webbrowser.open(REPOSITORY_URL)
             return
 
         if release is None:
-            self.log("GitHub 仓库还没有 Release，已提供源码仓库入口。")
-            if messagebox.askyesno("暂无发布版本", "GitHub 仓库尚未发布 Release。\n\n是否打开项目源码仓库？"):
+            self.log("Gitee 仓库还没有 Release，已提供源码仓库入口。")
+            if messagebox.askyesno("暂无发布版本", "Gitee 仓库尚未发布 Release。\n\n是否打开项目源码仓库？"):
                 webbrowser.open(REPOSITORY_URL)
             return
 
@@ -3128,13 +3128,13 @@ class VoteDocxApp(tk.Tk):
             self.log(f"发现新版本：v{latest_version}（当前 v{APP_VERSION}）")
             if messagebox.askyesno(
                 "发现新版本",
-                f"当前版本：v{APP_VERSION}\n最新版本：v{latest_version}\n\n{notes}\n\n是否打开 GitHub 下载页？",
+                f"当前版本：v{APP_VERSION}\n最新版本：v{latest_version}\n\n{notes}\n\n是否打开 Gitee 下载页？",
             ):
                 webbrowser.open(release.html_url)
             return
 
         self.log(f"当前已是最新版本：v{APP_VERSION}")
-        if messagebox.askyesno("已是最新版本", f"当前版本 v{APP_VERSION} 已是最新版本。\n\n是否打开 GitHub 源码仓库？"):
+        if messagebox.askyesno("已是最新版本", f"当前版本 v{APP_VERSION} 已是最新版本。\n\n是否打开 Gitee 源码仓库？"):
             webbrowser.open(REPOSITORY_URL)
 
     def log(self, message: str):

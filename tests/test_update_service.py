@@ -1,4 +1,5 @@
 import unittest
+import json
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -14,7 +15,30 @@ class FakeRedirectResponse:
 
     @staticmethod
     def geturl():
-        return "https://github.com/a2075393995-hub/qunzhong-toupiao/releases/tag/v0.2.2"
+        return "https://gitee.com/zhang-jiaxin654/qunzhong-toupiao/releases"
+
+    @staticmethod
+    def read():
+        return b'<a href="/zhang-jiaxin654/qunzhong-toupiao/releases/tag/v0.3.4">v0.3.4</a>'
+
+
+class FakeApiResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    @staticmethod
+    def read():
+        return json.dumps(
+            {
+                "tag_name": "v0.3.4",
+                "name": "群众投票 v0.3.4",
+                "body": "更新源迁移到 Gitee",
+                "created_at": "2026-08-05T12:00:00+08:00",
+            }
+        ).encode("utf-8")
 
 
 class VersionComparisonTests(unittest.TestCase):
@@ -31,16 +55,26 @@ class VersionComparisonTests(unittest.TestCase):
         release = ReleaseInfo("v2.3.4", "Release", "https://example.com", "", "")
         self.assertEqual(release.version, "2.3.4")
 
+    @patch("update_service.urlopen", return_value=FakeApiResponse())
+    def test_gitee_api_constructs_release_page_url(self, _mocked_urlopen):
+        release = fetch_latest_release(timeout=1)
+        self.assertEqual(release.version, "0.3.4")
+        self.assertEqual(
+            release.html_url,
+            "https://gitee.com/zhang-jiaxin654/qunzhong-toupiao/releases/tag/v0.3.4",
+        )
+        self.assertEqual(release.published_at, "2026-08-05T12:00:00+08:00")
+
     @patch(
         "update_service.urlopen",
         side_effect=[
-            HTTPError("https://api.github.com/test", 403, "rate limited", {}, None),
+            HTTPError("https://gitee.com/api/v5/test", 403, "rate limited", {}, None),
             FakeRedirectResponse(),
         ],
     )
     def test_rate_limit_falls_back_to_latest_release_page(self, mocked_urlopen):
         release = fetch_latest_release(timeout=1)
-        self.assertEqual(release.version, "0.2.2")
+        self.assertEqual(release.version, "0.3.4")
         self.assertEqual(mocked_urlopen.call_count, 2)
 
 
