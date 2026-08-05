@@ -12,9 +12,9 @@ import print_preview
 class PrintPreviewBackendTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary_directory.name)
-        self.source = self.root / "template.docx"
-        self.target = self.root / "preview.pdf"
+        self.root = Path(self.temporary_directory.name).resolve()
+        self.source = (self.root / "template.docx").resolve()
+        self.target = (self.root / "preview.pdf").resolve()
         self.source.write_bytes(b"docx")
 
     def tearDown(self):
